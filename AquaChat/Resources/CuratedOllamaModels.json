@@ -1,0 +1,995 @@
+{
+  "categoryOrder": [
+    "Popular",
+    "Meta Llama",
+    "Qwen",
+    "Google Gemma",
+    "Mistral AI",
+    "Microsoft Phi",
+    "DeepSeek",
+    "Cohere",
+    "IBM Granite",
+    "Vision (can see images)",
+    "Coding",
+    "Small & Fast",
+    "More Open Models"
+  ],
+  "models": [
+    {
+      "name": "llama3.2",
+      "blurb": "Meta's fast all-rounder — a great first local model",
+      "approxSize": "≈2.0 GB",
+      "sizeBytes": 2019393189,
+      "brand": "meta",
+      "category": "Popular"
+    },
+    {
+      "name": "llama3.3",
+      "blurb": "Meta's largest current model — near frontier quality",
+      "approxSize": "≈43 GB",
+      "sizeBytes": 42520413916,
+      "brand": "meta",
+      "category": "Popular"
+    },
+    {
+      "name": "qwen3",
+      "blurb": "Alibaba's strong general-purpose model",
+      "approxSize": "≈5.2 GB",
+      "sizeBytes": 5225388164,
+      "brand": "qwen",
+      "category": "Popular"
+    },
+    {
+      "name": "qwen2.5-coder",
+      "blurb": "Tuned specifically for writing code",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4683087561,
+      "brand": "qwen",
+      "category": "Popular"
+    },
+    {
+      "name": "gemma4",
+      "blurb": "Google's open Gemma, latest generation",
+      "approxSize": "≈9.6 GB",
+      "sizeBytes": 9608350718,
+      "brand": "google",
+      "category": "Popular"
+    },
+    {
+      "name": "mistral",
+      "blurb": "The classic 7B from Mistral AI",
+      "approxSize": "≈4.4 GB",
+      "sizeBytes": 4372824384,
+      "brand": "mistral",
+      "category": "Popular"
+    },
+    {
+      "name": "deepseek-r1",
+      "blurb": "Reasoning model — shows its thinking step by step",
+      "approxSize": "≈5.2 GB",
+      "sizeBytes": 5225376047,
+      "brand": "deepSeek",
+      "category": "Popular"
+    },
+    {
+      "name": "phi4-mini",
+      "blurb": "Microsoft's compact but capable model",
+      "approxSize": "≈2.5 GB",
+      "sizeBytes": 2491876774,
+      "brand": "microsoft",
+      "category": "Popular"
+    },
+    {
+      "name": "llava",
+      "blurb": "Vision model — can look at images",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4733363377,
+      "brand": null,
+      "category": "Popular"
+    },
+    {
+      "name": "smollm2",
+      "blurb": "Extremely small — runs on almost anything",
+      "approxSize": "≈1.8 GB",
+      "sizeBytes": 1820428533,
+      "brand": null,
+      "category": "Popular"
+    },
+    {
+      "name": "mixtral",
+      "blurb": "Mistral's mixture-of-experts model",
+      "approxSize": "≈26 GB",
+      "sizeBytes": 26443602516,
+      "brand": "mistral",
+      "category": "Popular"
+    },
+    {
+      "name": "command-r",
+      "blurb": "Cohere's model, built for tool use and retrieval",
+      "approxSize": "≈19 GB",
+      "sizeBytes": 18719506654,
+      "brand": "cohere",
+      "category": "Popular"
+    },
+    {
+      "name": "llama3.3",
+      "blurb": "Meta's largest current model — also in Popular above",
+      "approxSize": "≈43 GB",
+      "sizeBytes": 42520413916,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3.2:1b",
+      "blurb": "Tiny and quick, even with little free memory",
+      "approxSize": "≈1.3 GB",
+      "sizeBytes": 1321098329,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3.1",
+      "blurb": "The workhorse 3.1 release",
+      "approxSize": "≈4.9 GB",
+      "sizeBytes": 4920753328,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3.1:70b",
+      "blurb": "Big step up from 8B — much stronger reasoning",
+      "approxSize": "≈43 GB",
+      "sizeBytes": 42520412561,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3",
+      "blurb": "The original Llama 3",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4661224676,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama2",
+      "blurb": "The classic that started the local-AI wave",
+      "approxSize": "≈3.8 GB",
+      "sizeBytes": 3826793677,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama2:13b",
+      "blurb": "Llama 2, larger size",
+      "approxSize": "≈7.4 GB",
+      "sizeBytes": 7366821294,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama2:70b",
+      "blurb": "Llama 2 at full size",
+      "approxSize": "≈39 GB",
+      "sizeBytes": 38873235886,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama2-uncensored",
+      "blurb": "Llama 2 without the usual guardrails",
+      "approxSize": "≈3.8 GB",
+      "sizeBytes": 3825819449,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama4",
+      "blurb": "Meta's newest generation — huge and capable",
+      "approxSize": "≈67 GB",
+      "sizeBytes": 67436862523,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3.2-vision",
+      "blurb": "Llama 3.2 that can also look at images",
+      "approxSize": "≈7.8 GB",
+      "sizeBytes": 7816589186,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3.2-vision:90b",
+      "blurb": "The large vision variant",
+      "approxSize": "≈55 GB",
+      "sizeBytes": 54622563330,
+      "brand": "meta",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "llama3-chatqa",
+      "blurb": "NVIDIA's Llama fine-tune for Q&A over documents",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4661224261,
+      "brand": "nvidia",
+      "category": "Meta Llama"
+    },
+    {
+      "name": "qwen3:1.7b",
+      "blurb": "Small and fast Qwen 3",
+      "approxSize": "≈1.4 GB",
+      "sizeBytes": 1359293444,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen3:14b",
+      "blurb": "Bigger Qwen 3 for tougher tasks",
+      "approxSize": "≈9.3 GB",
+      "sizeBytes": 9276198565,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen3:30b",
+      "blurb": "Large Qwen 3",
+      "approxSize": "≈19 GB",
+      "sizeBytes": 18556699314,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5",
+      "blurb": "Alibaba's previous-generation all-rounder",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4683087332,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5:0.5b",
+      "blurb": "About as small as a real chat model gets",
+      "approxSize": "≈398 MB",
+      "sizeBytes": 397821319,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5:3b",
+      "blurb": "Small and quick",
+      "approxSize": "≈1.9 GB",
+      "sizeBytes": 1929912432,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5:14b",
+      "blurb": "Bigger Qwen 2.5",
+      "approxSize": "≈9.0 GB",
+      "sizeBytes": 8988124069,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5:32b",
+      "blurb": "Large Qwen 2.5",
+      "approxSize": "≈20 GB",
+      "sizeBytes": 19851349669,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5:72b",
+      "blurb": "The biggest Qwen 2.5",
+      "approxSize": "≈47 GB",
+      "sizeBytes": 47415724625,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5-coder:1.5b",
+      "blurb": "Small coding model, very fast",
+      "approxSize": "≈986 MB",
+      "sizeBytes": 986062089,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5-coder:32b",
+      "blurb": "The large, strongest coding variant",
+      "approxSize": "≈20 GB",
+      "sizeBytes": 19851349898,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2.5vl",
+      "blurb": "Qwen that can see images",
+      "approxSize": "≈6.0 GB",
+      "sizeBytes": 5969245856,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwen2",
+      "blurb": "The previous Qwen generation",
+      "approxSize": "≈4.4 GB",
+      "sizeBytes": 4431401491,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "qwq",
+      "blurb": "Qwen's dedicated reasoning model",
+      "approxSize": "≈20 GB",
+      "sizeBytes": 19851349657,
+      "brand": "qwen",
+      "category": "Qwen"
+    },
+    {
+      "name": "gemma3",
+      "blurb": "Google's open Gemma, previous generation",
+      "approxSize": "≈3.3 GB",
+      "sizeBytes": 3338801804,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma3:1b",
+      "blurb": "Tiny Gemma 3",
+      "approxSize": "≈815 MB",
+      "sizeBytes": 815319791,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma3:12b",
+      "blurb": "Bigger Gemma 3",
+      "approxSize": "≈8.1 GB",
+      "sizeBytes": 8149190253,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma3:27b",
+      "blurb": "The large Gemma 3",
+      "approxSize": "≈17 GB",
+      "sizeBytes": 17396936941,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma2",
+      "blurb": "An earlier Gemma generation",
+      "approxSize": "≈5.4 GB",
+      "sizeBytes": 5443152417,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma2:2b",
+      "blurb": "Tiny Gemma 2",
+      "approxSize": "≈1.6 GB",
+      "sizeBytes": 1629518495,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma2:27b",
+      "blurb": "The large Gemma 2",
+      "approxSize": "≈16 GB",
+      "sizeBytes": 15628387458,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma",
+      "blurb": "The original Gemma",
+      "approxSize": "≈5.0 GB",
+      "sizeBytes": 5011853225,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "gemma:2b",
+      "blurb": "Tiny original Gemma",
+      "approxSize": "≈1.7 GB",
+      "sizeBytes": 1678456656,
+      "brand": "google",
+      "category": "Google Gemma"
+    },
+    {
+      "name": "mistral-nemo",
+      "blurb": "Mistral's collaboration with NVIDIA",
+      "approxSize": "≈7.1 GB",
+      "sizeBytes": 7071713227,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "mistral-small",
+      "blurb": "A capable mid-size Mistral model",
+      "approxSize": "≈14 GB",
+      "sizeBytes": 14333921662,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "mistral-small3.1",
+      "blurb": "Newer small Mistral, adds vision",
+      "approxSize": "≈15 GB",
+      "sizeBytes": 15486899116,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "mistral-large",
+      "blurb": "Mistral's flagship — very large",
+      "approxSize": "≈73 GB",
+      "sizeBytes": 73219635500,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "mixtral:8x22b",
+      "blurb": "The large mixture-of-experts Mixtral",
+      "approxSize": "≈80 GB",
+      "sizeBytes": 79521279497,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "devstral",
+      "blurb": "Mistral's model built for coding agents",
+      "approxSize": "≈14 GB",
+      "sizeBytes": 14333928046,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "codestral",
+      "blurb": "Mistral's dedicated coding model",
+      "approxSize": "≈13 GB",
+      "sizeBytes": 12569170438,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "magistral",
+      "blurb": "Mistral's reasoning model",
+      "approxSize": "≈14 GB",
+      "sizeBytes": 14333921206,
+      "brand": "mistral",
+      "category": "Mistral AI"
+    },
+    {
+      "name": "phi4",
+      "blurb": "Microsoft's flagship small model",
+      "approxSize": "≈9.1 GB",
+      "sizeBytes": 9053116391,
+      "brand": "microsoft",
+      "category": "Microsoft Phi"
+    },
+    {
+      "name": "phi4-reasoning",
+      "blurb": "Phi 4 tuned for step-by-step reasoning",
+      "approxSize": "≈11 GB",
+      "sizeBytes": 11117503233,
+      "brand": "microsoft",
+      "category": "Microsoft Phi"
+    },
+    {
+      "name": "phi3",
+      "blurb": "The previous Phi generation",
+      "approxSize": "≈2.2 GB",
+      "sizeBytes": 2176178913,
+      "brand": "microsoft",
+      "category": "Microsoft Phi"
+    },
+    {
+      "name": "phi3:14b",
+      "blurb": "Bigger Phi 3",
+      "approxSize": "≈7.9 GB",
+      "sizeBytes": 7897127458,
+      "brand": "microsoft",
+      "category": "Microsoft Phi"
+    },
+    {
+      "name": "phi3.5",
+      "blurb": "A refined Phi 3",
+      "approxSize": "≈2.2 GB",
+      "sizeBytes": 2176178843,
+      "brand": "microsoft",
+      "category": "Microsoft Phi"
+    },
+    {
+      "name": "deepseek-r1:1.5b",
+      "blurb": "Tiny reasoning model, runs almost anywhere",
+      "approxSize": "≈1.1 GB",
+      "sizeBytes": 1117322768,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-r1:14b",
+      "blurb": "Bigger R1 for tougher problems",
+      "approxSize": "≈9.0 GB",
+      "sizeBytes": 8988112209,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-r1:32b",
+      "blurb": "Large R1",
+      "approxSize": "≈20 GB",
+      "sizeBytes": 19851337809,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-r1:70b",
+      "blurb": "The biggest R1 that still fits on a Mac",
+      "approxSize": "≈43 GB",
+      "sizeBytes": 42520397873,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-v3",
+      "blurb": "DeepSeek's huge flagship model — needs serious hardware",
+      "approxSize": "≈404 GB",
+      "sizeBytes": 404430200769,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-v2",
+      "blurb": "A previous-generation DeepSeek flagship",
+      "approxSize": "≈8.9 GB",
+      "sizeBytes": 8905124229,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-coder-v2",
+      "blurb": "DeepSeek's dedicated coding model",
+      "approxSize": "≈8.9 GB",
+      "sizeBytes": 8905126121,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-coder",
+      "blurb": "An earlier dedicated coding model",
+      "approxSize": "≈776 MB",
+      "sizeBytes": 776080839,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "deepseek-llm",
+      "blurb": "DeepSeek's original general chat model",
+      "approxSize": "≈4.0 GB",
+      "sizeBytes": 4000473688,
+      "brand": "deepSeek",
+      "category": "DeepSeek"
+    },
+    {
+      "name": "llava:13b",
+      "blurb": "Bigger vision model, sharper image understanding",
+      "approxSize": "≈8.0 GB",
+      "sizeBytes": 8011256494,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "llava:34b",
+      "blurb": "The largest LLaVA vision model",
+      "approxSize": "≈20 GB",
+      "sizeBytes": 20166497526,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "llava-llama3",
+      "blurb": "LLaVA vision, built on Llama 3",
+      "approxSize": "≈5.5 GB",
+      "sizeBytes": 5545682182,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "llava-phi3",
+      "blurb": "LLaVA vision, built on Phi 3 — small and quick",
+      "approxSize": "≈2.9 GB",
+      "sizeBytes": 2926568956,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "bakllava",
+      "blurb": "An alternate vision model based on Mistral",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4733351307,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "moondream",
+      "blurb": "A very small, very fast vision model",
+      "approxSize": "≈1.7 GB",
+      "sizeBytes": 1738451197,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "minicpm-v",
+      "blurb": "Compact vision model with strong OCR",
+      "approxSize": "≈5.5 GB",
+      "sizeBytes": 5473838466,
+      "brand": null,
+      "category": "Vision (can see images)"
+    },
+    {
+      "name": "codellama",
+      "blurb": "Meta's dedicated coding model",
+      "approxSize": "≈3.8 GB",
+      "sizeBytes": 3825910662,
+      "brand": "meta",
+      "category": "Coding"
+    },
+    {
+      "name": "codellama:13b",
+      "blurb": "Bigger CodeLlama",
+      "approxSize": "≈7.4 GB",
+      "sizeBytes": 7365960935,
+      "brand": "meta",
+      "category": "Coding"
+    },
+    {
+      "name": "codellama:34b",
+      "blurb": "The largest CodeLlama",
+      "approxSize": "≈19 GB",
+      "sizeBytes": 19052049085,
+      "brand": "meta",
+      "category": "Coding"
+    },
+    {
+      "name": "starcoder2",
+      "blurb": "A coding model trained on a huge range of languages",
+      "approxSize": "≈1.7 GB",
+      "sizeBytes": 1709901728,
+      "brand": null,
+      "category": "Coding"
+    },
+    {
+      "name": "codegemma",
+      "blurb": "Google's dedicated coding model",
+      "approxSize": "≈5.0 GB",
+      "sizeBytes": 5011852809,
+      "brand": "google",
+      "category": "Coding"
+    },
+    {
+      "name": "sqlcoder",
+      "blurb": "Specialized for writing SQL",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4108916695,
+      "brand": null,
+      "category": "Coding"
+    },
+    {
+      "name": "opencoder",
+      "blurb": "An open coding-focused model",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4736066175,
+      "brand": null,
+      "category": "Coding"
+    },
+    {
+      "name": "stable-code",
+      "blurb": "Stability AI's coding model",
+      "approxSize": "≈1.6 GB",
+      "sizeBytes": 1608579797,
+      "brand": "stabilityAI",
+      "category": "Coding"
+    },
+    {
+      "name": "codeqwen",
+      "blurb": "An earlier dedicated Qwen coding model",
+      "approxSize": "≈4.2 GB",
+      "sizeBytes": 4179438533,
+      "brand": "qwen",
+      "category": "Coding"
+    },
+    {
+      "name": "granite-code",
+      "blurb": "IBM's dedicated coding model",
+      "approxSize": "≈2.0 GB",
+      "sizeBytes": 1997354777,
+      "brand": "ibm",
+      "category": "Coding"
+    },
+    {
+      "name": "command-r-plus",
+      "blurb": "Cohere's largest model — built for tool use and retrieval",
+      "approxSize": "≈59 GB",
+      "sizeBytes": 59221118559,
+      "brand": "cohere",
+      "category": "Cohere"
+    },
+    {
+      "name": "command-r7b",
+      "blurb": "A small, fast Command R",
+      "approxSize": "≈5.1 GB",
+      "sizeBytes": 5057031198,
+      "brand": "cohere",
+      "category": "Cohere"
+    },
+    {
+      "name": "aya",
+      "blurb": "Cohere's multilingual model, 100+ languages",
+      "approxSize": "≈4.8 GB",
+      "sizeBytes": 4797474023,
+      "brand": "cohere",
+      "category": "Cohere"
+    },
+    {
+      "name": "aya-expanse",
+      "blurb": "A newer, stronger multilingual Cohere model",
+      "approxSize": "≈5.1 GB",
+      "sizeBytes": 5057000121,
+      "brand": "cohere",
+      "category": "Cohere"
+    },
+    {
+      "name": "granite3.3",
+      "blurb": "IBM's current general-purpose model",
+      "approxSize": "≈4.9 GB",
+      "sizeBytes": 4942891653,
+      "brand": "ibm",
+      "category": "IBM Granite"
+    },
+    {
+      "name": "granite3.2",
+      "blurb": "A previous Granite generation",
+      "approxSize": "≈4.9 GB",
+      "sizeBytes": 4942877287,
+      "brand": "ibm",
+      "category": "IBM Granite"
+    },
+    {
+      "name": "granite3.1-dense",
+      "blurb": "An earlier dense Granite model",
+      "approxSize": "≈5.0 GB",
+      "sizeBytes": 4991633814,
+      "brand": "ibm",
+      "category": "IBM Granite"
+    },
+    {
+      "name": "smollm2",
+      "blurb": "The standard SmolLM2 size — also in Popular above",
+      "approxSize": "≈1.8 GB",
+      "sizeBytes": 1820428533,
+      "brand": null,
+      "category": "Small & Fast"
+    },
+    {
+      "name": "smollm2:135m",
+      "blurb": "About as small as models get",
+      "approxSize": "≈271 MB",
+      "sizeBytes": 270898672,
+      "brand": null,
+      "category": "Small & Fast"
+    },
+    {
+      "name": "tinyllama",
+      "blurb": "A tiny 1.1B Llama-architecture model",
+      "approxSize": "≈638 MB",
+      "sizeBytes": 637700138,
+      "brand": null,
+      "category": "Small & Fast"
+    },
+    {
+      "name": "dolphin-mixtral",
+      "blurb": "An uncensored fine-tune of Mixtral",
+      "approxSize": "≈26 GB",
+      "sizeBytes": 26443614406,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "dolphin3",
+      "blurb": "An uncensored general chat model",
+      "approxSize": "≈4.9 GB",
+      "sizeBytes": 4920757726,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "dolphin-llama3",
+      "blurb": "An uncensored fine-tune of Llama 3",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4661235994,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "wizardlm2",
+      "blurb": "Microsoft's WizardLM, tuned for complex instructions",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4108928625,
+      "brand": "microsoft",
+      "category": "More Open Models"
+    },
+    {
+      "name": "vicuna",
+      "blurb": "An early, well-known fine-tune of Llama",
+      "approxSize": "≈3.8 GB",
+      "sizeBytes": 3825807726,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "orca-mini",
+      "blurb": "A small model trained to imitate larger ones",
+      "approxSize": "≈2.0 GB",
+      "sizeBytes": 1979947443,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "stablelm2",
+      "blurb": "Stability AI's general chat model",
+      "approxSize": "≈983 MB",
+      "sizeBytes": 982790462,
+      "brand": "stabilityAI",
+      "category": "More Open Models"
+    },
+    {
+      "name": "openhermes",
+      "blurb": "A well-regarded community fine-tune",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4108928574,
+      "brand": "nous",
+      "category": "More Open Models"
+    },
+    {
+      "name": "hermes3",
+      "blurb": "Nous Research's flagship general model",
+      "approxSize": "≈4.7 GB",
+      "sizeBytes": 4661227243,
+      "brand": "nous",
+      "category": "More Open Models"
+    },
+    {
+      "name": "athene-v2",
+      "blurb": "A large model tuned for following instructions well",
+      "approxSize": "≈47 GB",
+      "sizeBytes": 47415723963,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "reflection",
+      "blurb": "A model trained to catch and correct its own mistakes",
+      "approxSize": "≈40 GB",
+      "sizeBytes": 39969818946,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "solar",
+      "blurb": "Upstage's compact, capable model",
+      "approxSize": "≈6.1 GB",
+      "sizeBytes": 6072384211,
+      "brand": "upstage",
+      "category": "More Open Models"
+    },
+    {
+      "name": "zephyr",
+      "blurb": "A well-known fine-tune focused on helpfulness",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4109854934,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "openchat",
+      "blurb": "A community model tuned on high-quality conversations",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4109876386,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "starling-lm",
+      "blurb": "A model trained with reinforcement learning from AI feedback",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4108940286,
+      "brand": null,
+      "category": "More Open Models"
+    },
+    {
+      "name": "neural-chat",
+      "blurb": "Intel's general-purpose chat model",
+      "approxSize": "≈4.1 GB",
+      "sizeBytes": 4109853239,
+      "brand": "intel",
+      "category": "More Open Models"
+    },
+    {
+      "name": "nous-hermes2",
+      "blurb": "Nous Research's earlier flagship model",
+      "approxSize": "≈6.1 GB",
+      "sizeBytes": 6072407285,
+      "brand": "nous",
+      "category": "More Open Models"
+    },
+    {
+      "name": "falcon",
+      "blurb": "TII's original open model",
+      "approxSize": "≈4.2 GB",
+      "sizeBytes": 4210994570,
+      "brand": "tii",
+      "category": "More Open Models"
+    },
+    {
+      "name": "falcon2",
+      "blurb": "TII's next generation",
+      "approxSize": "≈6.4 GB",
+      "sizeBytes": 6382548347,
+      "brand": "tii",
+      "category": "More Open Models"
+    },
+    {
+      "name": "falcon3",
+      "blurb": "TII's current generation",
+      "approxSize": "≈4.6 GB",
+      "sizeBytes": 4569738977,
+      "brand": "tii",
+      "category": "More Open Models"
+    },
+    {
+      "name": "yi",
+      "blurb": "01.AI's bilingual (English/Chinese) model",
+      "approxSize": "≈3.5 GB",
+      "sizeBytes": 3479338641,
+      "brand": "zeroOneAI",
+      "category": "More Open Models"
+    },
+    {
+      "name": "olmo2",
+      "blurb": "Allen Institute's fully open model — training data included",
+      "approxSize": "≈4.5 GB",
+      "sizeBytes": 4472032405,
+      "brand": "allenAI",
+      "category": "More Open Models"
+    },
+    {
+      "name": "exaone3.5",
+      "blurb": "LG's general-purpose model",
+      "approxSize": "≈4.8 GB",
+      "sizeBytes": 4770664857,
+      "brand": "lg",
+      "category": "More Open Models"
+    },
+    {
+      "name": "nemotron-mini",
+      "blurb": "NVIDIA's small efficient model",
+      "approxSize": "≈2.7 GB",
+      "sizeBytes": 2697402546,
+      "brand": "nvidia",
+      "category": "More Open Models"
+    },
+    {
+      "name": "dbrx",
+      "blurb": "Databricks' huge mixture-of-experts model — needs serious hardware",
+      "approxSize": "≈74 GB",
+      "sizeBytes": 74192938710,
+      "brand": "databricks",
+      "category": "More Open Models"
+    }
+  ]
+}
