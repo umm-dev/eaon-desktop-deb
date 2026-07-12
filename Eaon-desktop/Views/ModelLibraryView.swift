@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The "Models" section: download open models from Ollama's library or
@@ -5,6 +6,7 @@ import SwiftUI
 /// running privately on this Mac.
 struct ModelLibraryView: View {
     @Environment(\.themeColors) private var colors
+    @Environment(\.openWindow) private var openWindow
     @Bindable var chatViewModel: ChatViewModel
     @Bindable private var manager = LocalAIManager.shared
     /// Called with a local model id when the user hits "Chat".
@@ -17,6 +19,11 @@ struct ModelLibraryView: View {
 
     @State private var source: LibrarySource = .ollama
     @State private var searchText = ""
+    /// GGUF (llama.cpp) or MLX — MLX is Apple's own framework and often runs
+    /// faster than GGUF on Apple Silicon specifically, but until now had no
+    /// discovery UI at all (only a manual "paste a repo id" entry point in
+    /// Settings), unlike GGUF's full search-and-download experience here.
+    @State private var hfFormat: LocalAIManager.HFModelFormat = .gguf
     @State private var hfResults: [LocalAIManager.HFSearchResult] = []
     @State private var isSearchingHF = false
     @State private var searchTask: Task<Void, Never>?
@@ -42,6 +49,18 @@ struct ModelLibraryView: View {
     /// lazily-fetched options (fetched once per repo, cached here).
     @State private var quantPickerRepo: String?
     @State private var ggufOptions: [String: [LocalAIManager.GGUFFile]] = [:]
+    /// Real params/quantization/family for curated + custom-pull Ollama
+    /// entries, keyed by model name — fetched lazily from Ollama's public
+    /// registry (see `LocalAIManager.fetchOllamaRegistrySpecs`) rather than
+    /// baked into the curated JSON, so it never goes stale. Fetched once a
+    /// category is expanded (or immediately for "Popular", open by default)
+    /// rather than for all 124 curated models up front.
+    @State private var ollamaSpecs: [String: LocalAIManager.OllamaModelSpecs] = [:]
+    @State private var ollamaSpecsFetching: Set<String> = []
+    /// Opens `LocalBackendsInstallSheet` — every local runner's install
+    /// command in one place, reachable proactively from the header (not
+    /// only after hitting a "this isn't installed" wall on one specific tab).
+    @State private var showingInstallGuide = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -60,14 +79,17 @@ struct ModelLibraryView: View {
                 }
                 .padding(.horizontal, 32)
                 .padding(.bottom, 32)
-                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(colors.backgroundPrimary)
         .onAppear {
             manager.detectInstalledBackends()
             Task { await manager.refreshOllamaModels(startServerIfNeeded: true) }
+            prefetchOllamaSpecs(for: LocalAIManager.curatedOllamaModels
+                .filter { $0.category == "Popular" }
+                .map(\.name))
         }
         .alert(
             "Delete this model?",
@@ -87,22 +109,61 @@ struct ModelLibraryView: View {
                  ? "\(record.displayName) will be removed from this Mac (frees \(record.detail.replacingOccurrences(of: " on this Mac", with: ""))). You can download it again anytime."
                  : "\(record.displayName) will be removed. Downloaded files in the app's models folder are deleted too.")
         }
+        .sheet(isPresented: $showingInstallGuide) {
+            LocalBackendsInstallSheet()
+        }
+    }
+
+    // MARK: Model page links
+
+    /// Ollama's library pages are keyed by the base model name only — any
+    /// `:tag` is a size/quant variant picked *within* the page, not part of
+    /// its URL. Opens as a real pop-up app window (the `WindowGroup(for:
+    /// URL.self)` scene in `App.swift`), not the system browser — reopening
+    /// the same URL brings that window forward instead of duplicating it.
+    private func openOllamaLibraryPage(for name: String) {
+        let base = String(name.split(separator: ":", maxSplits: 1).first ?? Substring(name))
+        guard let url = URL(string: "https://ollama.com/library/\(base)") else { return }
+        openWindow(value: url)
+    }
+
+    private func openHuggingFacePage(for repo: String) {
+        guard let url = URL(string: "https://huggingface.co/\(repo)") else { return }
+        openWindow(value: url)
     }
 
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Models")
-                .font(AppFont.mono(20, weight: .bold))
-                .foregroundColor(colors.textPrimary)
-            Text("Download open models and run them privately on this Mac — no API key, no internet once they're here.")
-                .font(AppFont.sans(12))
-                .foregroundColor(colors.textSecondary)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Models")
+                    .font(AppFont.mono(20, weight: .bold))
+                    .foregroundColor(colors.textPrimary)
+                Text("Download open models and run them privately on this Mac — no API key, no internet once they're here.")
+                    .font(AppFont.sans(12))
+                    .foregroundColor(colors.textSecondary)
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                showingInstallGuide = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 11))
+                    Text("Install Local Runners")
+                        .font(AppFont.mono(11, weight: .medium))
+                }
+            }
+            .buttonStyle(.bordered)
+            .help("See install commands for Ollama, llama.cpp, and MLX")
         }
         .padding(.horizontal, 32)
         .padding(.top, 50)
         .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Source picker + search
@@ -165,7 +226,7 @@ struct ModelLibraryView: View {
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled else { return }
             isSearchingHF = true
-            let results = await manager.searchHuggingFaceGGUF(query)
+            let results = await manager.searchHuggingFace(query, format: hfFormat)
             guard !Task.isCancelled else { return }
             hfResults = results
             isSearchingHF = false
@@ -174,15 +235,16 @@ struct ModelLibraryView: View {
     }
 
     /// Loads the default "Trending on Hugging Face" list — real, live,
-    /// most-downloaded GGUF models — so the tab has something to browse the
-    /// moment you open it, not just a search box waiting for input.
+    /// most-downloaded models in the current format — so the tab has
+    /// something to browse the moment you open it, not just a search box
+    /// waiting for input.
     private func loadTrendingIfNeeded() {
         guard !isShowingTrending, !isLoadingTrending else { return }
         isShowingTrending = true
         isLoadingTrending = true
         searchTask?.cancel()
         searchTask = Task {
-            let results = await manager.searchHuggingFaceGGUF("", limit: 20)
+            let results = await manager.searchHuggingFace("", format: hfFormat, limit: 20)
             guard !Task.isCancelled else { return }
             hfResults = results
             isLoadingTrending = false
@@ -190,18 +252,37 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Resolves each search result's real GGUF file size concurrently, so a
-    /// fit badge can appear before the user picks Download — the same
-    /// resolution `startHFDownload` does later, just run ahead of time
-    /// purely to know the size.
+    /// Switching formats is a fresh browse, not a filter over what's already
+    /// showing — GGUF and MLX search hit different Hugging Face result sets
+    /// entirely.
+    private func switchFormat(to format: LocalAIManager.HFModelFormat) {
+        guard format != hfFormat else { return }
+        hfFormat = format
+        hfResults = []
+        isShowingTrending = false
+        runSearchIfNeeded()
+    }
+
+    /// Resolves each search result's real download size concurrently, so a
+    /// fit badge can appear before the user commits — GGUF resolves its one
+    /// auto-picked file the same way `startHFDownload` does later; MLX sums
+    /// the repo's real safetensors weights, since there's no single file to
+    /// point at.
     private func prefetchHFSizes(for results: [LocalAIManager.HFSearchResult]) async {
         hfSizes.removeAll()
         hfSizesFetching = Set(results.map(\.id))
+        let format = hfFormat
         await withTaskGroup(of: (String, Int64?).self) { group in
             for result in results {
                 group.addTask {
-                    let file = try? await manager.resolveGGUFFile(repo: result.id)
-                    return (result.id, file?.size)
+                    switch format {
+                    case .gguf:
+                        let file = try? await manager.resolveGGUFFile(repo: result.id)
+                        return (result.id, file?.size)
+                    case .mlx:
+                        let size = try? await manager.resolveMLXRepoSize(repo: result.id)
+                        return (result.id, size)
+                    }
                 }
             }
             for await (id, size) in group {
@@ -210,6 +291,36 @@ struct ModelLibraryView: View {
                 hfSizesFetching.remove(id)
             }
         }
+    }
+
+    /// Lazily fetches real params/quantization/family for names that aren't
+    /// cached (or already in flight) yet — called when "Popular" first
+    /// appears and whenever another category is expanded, so specs load
+    /// progressively instead of all 124 models' worth up front.
+    private func prefetchOllamaSpecs(for names: [String]) {
+        for name in names {
+            guard ollamaSpecs[name] == nil, !ollamaSpecsFetching.contains(name) else { continue }
+            ollamaSpecsFetching.insert(name)
+            Task {
+                let specs = await manager.fetchOllamaRegistrySpecs(name: name)
+                ollamaSpecsFetching.remove(name)
+                if let specs { ollamaSpecs[name] = specs }
+            }
+        }
+    }
+
+    /// "3.2B · Q4_K_M · llama" — only the parts that are actually known are
+    /// joined, and nil comes back rather than an empty string when nothing
+    /// is known yet, so callers can cleanly skip rendering the line at all.
+    private static func specsLine(paramSize: String?, quantization: String?, family: String?, contextLength: Int? = nil) -> String? {
+        var parts: [String] = []
+        if let paramSize { parts.append(paramSize) }
+        if let quantization { parts.append(quantization) }
+        if let family { parts.append(family) }
+        if let contextLength, contextLength > 0 {
+            parts.append(contextLength >= 1000 ? "\(contextLength / 1000)K context" : "\(contextLength) context")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     // MARK: Ollama library
@@ -271,6 +382,7 @@ struct ModelLibraryView: View {
                         expandedCategories.remove(category)
                     } else {
                         expandedCategories.insert(category)
+                        prefetchOllamaSpecs(for: models.map(\.name))
                     }
                 }
             } label: {
@@ -309,15 +421,36 @@ struct ModelLibraryView: View {
         SettingsCard {
             HStack(spacing: 12) {
                 ModelOriginBadge(brand: LocalAIManager.guessBrand(forName: name))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(AppFont.mono(13, weight: .semibold))
-                        .foregroundColor(colors.textPrimary)
-                    Text(pullStatusText(for: name) ?? "From ollama.com/library")
-                        .font(AppFont.mono(11))
-                        .foregroundColor(colors.textTertiary)
-                        .lineLimit(1)
+                Button {
+                    openOllamaLibraryPage(for: name)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                            .font(AppFont.mono(13, weight: .semibold))
+                            .foregroundColor(colors.textPrimary)
+                        HStack(spacing: 8) {
+                            if manager.pullingModelName == name, let fraction = manager.pullFraction {
+                                ProgressView(value: fraction)
+                                    .controlSize(.small)
+                                    .frame(width: 100)
+                            }
+                            Text(pullStatusText(for: name) ?? "From ollama.com/library")
+                                .font(AppFont.mono(11))
+                                .foregroundColor(colors.textTertiary)
+                                .lineLimit(1)
+                        }
+                        if pullStatusText(for: name) == nil,
+                           let specs = ollamaSpecs[name],
+                           let line = Self.specsLine(paramSize: specs.paramSize, quantization: specs.quantization, family: specs.family) {
+                            Text(line)
+                                .font(AppFont.mono(10.5))
+                                .foregroundColor(colors.textTertiary)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help("See \(name)'s full description, benchmarks, and license on ollama.com")
                 Spacer()
                 if manager.pullingModelName != name {
                     if let size = customPullSize {
@@ -336,9 +469,12 @@ struct ModelLibraryView: View {
             // Debounce so a fetch doesn't fire on every keystroke.
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            let size = await manager.fetchOllamaRegistrySize(name: name)
+            async let size = manager.fetchOllamaRegistrySize(name: name)
+            async let specs = manager.fetchOllamaRegistrySpecs(name: name)
+            let (resolvedSize, resolvedSpecs) = await (size, specs)
             guard !Task.isCancelled else { return }
-            customPullSize = size
+            customPullSize = resolvedSize
+            if let resolvedSpecs { ollamaSpecs[name] = resolvedSpecs }
             isCheckingCustomPullSize = false
         }
     }
@@ -346,20 +482,41 @@ struct ModelLibraryView: View {
     private func curatedRow(_ model: LocalAIManager.CuratedOllamaModel) -> some View {
         HStack(spacing: 12) {
             ModelOriginBadge(brand: model.brand)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(model.name)
-                        .font(AppFont.mono(13, weight: .semibold))
-                        .foregroundColor(colors.textPrimary)
-                    Text(model.approxSize)
-                        .font(AppFont.mono(10.5))
-                        .foregroundColor(colors.textTertiary)
+            Button {
+                openOllamaLibraryPage(for: model.name)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(model.name)
+                            .font(AppFont.mono(13, weight: .semibold))
+                            .foregroundColor(colors.textPrimary)
+                        Text(model.approxSize)
+                            .font(AppFont.mono(10.5))
+                            .foregroundColor(colors.textTertiary)
+                    }
+                    HStack(spacing: 8) {
+                        if manager.pullingModelName == model.name, let fraction = manager.pullFraction {
+                            ProgressView(value: fraction)
+                                .controlSize(.small)
+                                .frame(width: 100)
+                        }
+                        Text(pullStatusText(for: model.name) ?? model.blurb)
+                            .font(AppFont.mono(11))
+                            .foregroundColor(colors.textSecondary)
+                            .lineLimit(1)
+                    }
+                    if pullStatusText(for: model.name) == nil,
+                       let specs = ollamaSpecs[model.name],
+                       let line = Self.specsLine(paramSize: specs.paramSize, quantization: specs.quantization, family: specs.family) {
+                        Text(line)
+                            .font(AppFont.mono(10.5))
+                            .foregroundColor(colors.textTertiary)
+                    }
                 }
-                Text(pullStatusText(for: model.name) ?? model.blurb)
-                    .font(AppFont.mono(11))
-                    .foregroundColor(colors.textSecondary)
-                    .lineLimit(1)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("See \(model.name)'s full description, benchmarks, and license on ollama.com")
             Spacer(minLength: 12)
             if manager.installedOllamaModelId(model.name) == nil, manager.pullingModelName != model.name {
                 ModelFitBadge(estimate: ModelFitEstimator.assess(downloadSizeBytes: model.sizeBytes, backend: .ollama))
@@ -418,76 +575,112 @@ struct ModelLibraryView: View {
 
     @ViewBuilder
     private var huggingFaceLibrary: some View {
-        if !manager.installed.contains(.llamaCpp) {
-            missingBackendCard(.llamaCpp)
-        } else if isLoadingTrending {
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Loading popular models from Hugging Face…")
+        VStack(alignment: .leading, spacing: 12) {
+            formatToggle
+
+            if !manager.installed.contains(hfFormat.backend) {
+                missingBackendCard(hfFormat.backend)
+            } else if isLoadingTrending {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading popular models from Hugging Face…")
+                        .font(AppFont.mono(13))
+                        .foregroundColor(colors.textSecondary)
+                }
+            } else if hfResults.isEmpty && !isSearchingHF && !isShowingTrending {
+                Text("No \(hfFormat.displayName) models matched — try different words.")
                     .font(AppFont.mono(13))
                     .foregroundColor(colors.textSecondary)
-            }
-        } else if hfResults.isEmpty && !isSearchingHF && !isShowingTrending {
-            Text("No GGUF models matched — try different words.")
-                .font(AppFont.mono(13))
-                .foregroundColor(colors.textSecondary)
-        } else if !hfResults.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(isShowingTrending ? "Trending on Hugging Face" : "Search results")
-                    .font(AppFont.mono(13, weight: .semibold))
-                    .foregroundColor(colors.textPrimary)
+            } else if !hfResults.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(isShowingTrending ? "Trending on Hugging Face" : "Search results")
+                        .font(AppFont.mono(13, weight: .semibold))
+                        .foregroundColor(colors.textPrimary)
 
-                SettingsCard {
-                    VStack(spacing: 0) {
-                        ForEach(Array(hfResults.enumerated()), id: \.element.id) { index, result in
-                            if index > 0 { Divider().padding(.leading, 16) }
-                            hfRow(result)
+                    SettingsCard {
+                        VStack(spacing: 0) {
+                            ForEach(Array(hfResults.enumerated()), id: \.element.id) { index, result in
+                                if index > 0 { Divider().padding(.leading, 16) }
+                                hfRow(result)
+                            }
                         }
                     }
-                }
 
-                Text("Hugging Face hosts hundreds of thousands of models — search above for anything specific. The best single-file (GGUF) version is picked automatically for each one.")
-                    .font(AppFont.sans(11))
-                    .foregroundColor(colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(hfFormat == .gguf
+                         ? "Hugging Face hosts hundreds of thousands of models — search above for anything specific. The best single-file (GGUF) version is picked automatically for each one."
+                         : "Hugging Face hosts hundreds of thousands of models — search above for anything specific. MLX is Apple's own framework and often runs faster than GGUF here; models download automatically the first time you chat with them.")
+                        .font(AppFont.sans(11))
+                        .foregroundColor(colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+    }
+
+    /// GGUF/MLX — same visual language as the Ollama/Hugging Face source
+    /// picker just above it, one level down.
+    private var formatToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(LocalAIManager.HFModelFormat.allCases, id: \.self) { candidate in
+                Button {
+                    switchFormat(to: candidate)
+                } label: {
+                    Text(candidate.displayName)
+                        .font(AppFont.mono(11, weight: .medium))
+                        .foregroundStyle(hfFormat == candidate ? colors.textPrimary : colors.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(hfFormat == candidate ? colors.backgroundSelected : .clear))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(colors.backgroundChip))
     }
 
     private func hfRow(_ result: LocalAIManager.HFSearchResult) -> some View {
         let download = manager.hfDownloads[result.id]
         return HStack(spacing: 12) {
             ModelOriginBadge(brand: LocalAIManager.guessBrand(forName: result.id))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(result.id)
-                    .font(AppFont.mono(12.5, weight: .semibold))
-                    .foregroundColor(colors.textPrimary)
-                    .lineLimit(1)
+            Button {
+                openHuggingFacePage(for: result.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(result.id)
+                        .font(AppFont.mono(12.5, weight: .semibold))
+                        .foregroundColor(colors.textPrimary)
+                        .lineLimit(1)
 
-                if let download {
-                    HStack(spacing: 8) {
-                        if let fraction = download.fraction, !download.finished, !download.failed {
-                            ProgressView(value: fraction)
-                                .controlSize(.small)
-                                .frame(width: 120)
+                    if let download {
+                        HStack(spacing: 8) {
+                            if let fraction = download.fraction, !download.finished, !download.failed {
+                                ProgressView(value: fraction)
+                                    .controlSize(.small)
+                                    .frame(width: 120)
+                            }
+                            Text(download.status)
+                                .font(AppFont.mono(11))
+                                .foregroundColor(download.failed ? colors.destructive : colors.textSecondary)
+                                .lineLimit(1)
                         }
-                        Text(download.status)
+                    } else {
+                        Text("\(Self.formatCount(result.downloads)) downloads · \(Self.formatCount(result.likes)) likes")
                             .font(AppFont.mono(11))
-                            .foregroundColor(download.failed ? colors.destructive : colors.textSecondary)
-                            .lineLimit(1)
+                            .foregroundColor(colors.textTertiary)
                     }
-                } else {
-                    Text("\(Self.formatCount(result.downloads)) downloads · \(Self.formatCount(result.likes)) likes")
-                        .font(AppFont.mono(11))
-                        .foregroundColor(colors.textTertiary)
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("See \(result.id)'s model card on huggingface.co")
 
             Spacer(minLength: 12)
 
             if download == nil, manager.downloadedModelId(forRepo: result.id) == nil {
                 if let size = hfSizes[result.id] {
-                    ModelFitBadge(estimate: ModelFitEstimator.assess(downloadSizeBytes: size, backend: .llamaCpp))
+                    ModelFitBadge(estimate: ModelFitEstimator.assess(downloadSizeBytes: size, backend: hfFormat.backend))
                 } else if hfSizesFetching.contains(result.id) {
                     ModelFitLoadingBadge()
                 }
@@ -505,6 +698,21 @@ struct ModelLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Cancel download")
+            } else if hfFormat == .mlx {
+                // No quant picker here — MLX quantizations are separate
+                // repos already (e.g. the "-4bit"/"-8bit" suffix), unlike
+                // GGUF's one-repo-many-files shape, so there's nothing to
+                // pick after you've already picked the search result. And
+                // there's no in-app download to track: `addUserModel`
+                // registers it, then the same one-click "land in chat"
+                // behavior GGUF gets kicks off the real (lazy,
+                // mlx_lm.server-driven) download.
+                downloadButton(disabled: false) {
+                    manager.addUserModel(backend: .mlx, source: result.id, isFile: false)
+                    if let modelId = manager.downloadedModelId(forRepo: result.id) {
+                        onStartChat(modelId)
+                    }
+                }
             } else {
                 HStack(spacing: 6) {
                     Button {
@@ -639,22 +847,74 @@ struct ModelLibraryView: View {
         }
     }
 
+    /// llama.cpp/MLX records link to their originating Hugging Face repo
+    /// when they have one (not for a single-file download, which has no
+    /// repo-root page worth landing on). `nil` means genuinely nothing to
+    /// link to — an old persisted record from before `source` was tracked,
+    /// say. Ollama-backed records always have somewhere to link (their own
+    /// library page), handled separately below.
+    private func huggingFaceRepo(for record: LocalModelRecord) -> String? {
+        guard record.backend != .ollama, let source = record.source, record.isFile != true else { return nil }
+        return source
+    }
+
+    @ViewBuilder
+    private func localRowInfo(_ record: LocalModelRecord) -> some View {
+        let info = VStack(alignment: .leading, spacing: 2) {
+            Text(record.displayName)
+                .font(AppFont.mono(13, weight: .medium))
+                .foregroundColor(colors.textPrimary)
+                .lineLimit(1)
+            Text("\(record.backend.displayName) · \(record.detail)")
+                .font(AppFont.mono(11))
+                .foregroundColor(colors.textTertiary)
+                .lineLimit(1)
+            // Real specs straight from Ollama's own `/api/tags` for a model
+            // already on this Mac — no fetch needed, no guessing. llama.cpp
+            // MLX records have none of these fields, so the line just
+            // doesn't render for them.
+            if let line = Self.specsLine(
+                paramSize: record.paramSize,
+                quantization: record.quantization,
+                family: record.family,
+                contextLength: record.contextLength
+            ) {
+                Text(line)
+                    .font(AppFont.mono(10.5))
+                    .foregroundColor(colors.textTertiary)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
+
+        if record.backend == .ollama {
+            Button {
+                openOllamaLibraryPage(for: record.requestModelId)
+            } label: {
+                info
+            }
+            .buttonStyle(.plain)
+            .help("Open \(record.displayName) on ollama.com")
+        } else if let repo = huggingFaceRepo(for: record) {
+            Button {
+                openHuggingFacePage(for: repo)
+            } label: {
+                info
+            }
+            .buttonStyle(.plain)
+            .help("Open \(record.displayName) on huggingface.co")
+        } else {
+            info
+        }
+    }
+
     private func localRow(_ record: LocalModelRecord) -> some View {
         HStack(spacing: 12) {
             // The backend is already named in the subtitle below, so this
             // chip is free to show the more distinctive fact: who made it.
             ModelOriginBadge(brand: LocalAIManager.guessBrand(forName: record.requestModelId), size: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.displayName)
-                    .font(AppFont.mono(13, weight: .medium))
-                    .foregroundColor(colors.textPrimary)
-                    .lineLimit(1)
-                Text("\(record.backend.displayName) · \(record.detail)")
-                    .font(AppFont.mono(11))
-                    .foregroundColor(colors.textTertiary)
-                    .lineLimit(1)
-            }
+            localRowInfo(record)
 
             Spacer(minLength: 12)
 
@@ -822,10 +1082,22 @@ struct ModelLibraryView: View {
                         .padding(.vertical, 6)
                         .background(colors.backgroundInput)
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .textSelection(.enabled)
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(backend.installCommand, forType: .string)
+                    }
+                    .buttonStyle(.bordered)
                     AccentButton(title: "Check again") {
                         manager.detectInstalledBackends()
                     }
                 }
+                Button("See every local runner and its install command →") {
+                    showingInstallGuide = true
+                }
+                .buttonStyle(.plain)
+                .font(AppFont.mono(11, weight: .medium))
+                .foregroundColor(colors.link)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)

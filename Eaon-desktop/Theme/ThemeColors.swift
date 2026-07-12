@@ -55,18 +55,22 @@ struct ThemeColors: Equatable {
     // slightly *darker* sidebar receding behind it (not lighter), and
     // popovers/inputs a shade lighter than the stage so they read as
     // "sitting on top" of it.
+    // Darkened 2026-07-12 — the old #212121 stage read as noticeably lighter
+    // gray than the near-black the app should have; every surface below is
+    // shifted down together so the same relative layering (sidebar recedes
+    // darkest, elevated surfaces sit a shade above the stage) still holds.
     static let dark = ThemeColors(
-        backgroundPrimary: Color(hex: "#212121"),
-        backgroundSidebar: Color(hex: "#171717"),
-        backgroundElevated: Color(hex: "#2F2F2F"),
-        backgroundPopover: Color(hex: "#2F2F2F"),
-        backgroundInput: Color(hex: "#2F2F2F"),
-        backgroundInputSecondary: Color(hex: "#3A3A3A"),
-        backgroundCode: Color(hex: "#0D0D0D"),
-        backgroundCodeHeader: Color(hex: "#2A2A2A"),
-        backgroundChip: Color(hex: "#2F2F2F"),
-        backgroundChipSecondary: Color(hex: "#3A3A3A"),
-        backgroundChart: Color(hex: "#2A2A2A"),
+        backgroundPrimary: Color(hex: "#171717"),
+        backgroundSidebar: Color(hex: "#101010"),
+        backgroundElevated: Color(hex: "#242424"),
+        backgroundPopover: Color(hex: "#242424"),
+        backgroundInput: Color(hex: "#242424"),
+        backgroundInputSecondary: Color(hex: "#2E2E2E"),
+        backgroundCode: Color(hex: "#0A0A0A"),
+        backgroundCodeHeader: Color(hex: "#202020"),
+        backgroundChip: Color(hex: "#242424"),
+        backgroundChipSecondary: Color(hex: "#2E2E2E"),
+        backgroundChart: Color(hex: "#202020"),
         backgroundOverlay: Color.black.opacity(0.6),
         backgroundHover: Color.white.opacity(0.06),
         backgroundSelected: Color.white.opacity(0.11),
@@ -77,7 +81,7 @@ struct ThemeColors: Equatable {
         textCode: Color(hex: "#ECECEC"),
         borderSubtle: Color.white.opacity(0.10),
         borderMedium: Color.white.opacity(0.16),
-        userBubble: Color(hex: "#2F2F2F"),
+        userBubble: Color(hex: "#242424"),
         shadowColor: Color.black.opacity(0.5),
         destructive: Color(hex: "#FF6467"),
         link: Color(hex: "#5B9BFF")
@@ -101,7 +105,10 @@ struct ThemeColors: Equatable {
         backgroundSubtle: Color.black.opacity(0.045),
         textPrimary: Color(hex: "#0D0D0D"),
         textSecondary: Color(hex: "#5D5D5D"),
-        textTertiary: Color(hex: "#8E8E9C"),
+        // Darkened from #8E8E9C, which measures ~3.23:1 against this
+        // background — fails WCAG AA's 4.5:1 for normal text (the dark-mode
+        // value passes fine as-is; only light mode needed the fix).
+        textTertiary: Color(hex: "#6E6E7A"),
         textCode: Color(hex: "#1F2328"),
         borderSubtle: Color.black.opacity(0.08),
         borderMedium: Color.black.opacity(0.14),

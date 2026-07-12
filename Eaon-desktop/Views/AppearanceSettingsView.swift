@@ -44,7 +44,7 @@ struct AppearanceSettingsView: View {
 
             SettingsCard {
                 VStack(alignment: .leading, spacing: 0) {
-                    settingsRow("Appearance", description: "Choose how Aqua looks.") {
+                    settingsRow("Appearance", description: "Choose how Eaon looks.") {
                         themedPicker(selection: $settings.theme) {
                             ForEach(AppTheme.allCases) { theme in
                                 Text(theme.rawValue).tag(theme)

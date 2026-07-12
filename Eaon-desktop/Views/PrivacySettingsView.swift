@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 struct PrivacySettingsView: View {
     @Environment(\.themeColors) private var colors
     @Bindable var chatViewModel: ChatViewModel
+    @Bindable private var webSearchStore = WebSearchStore.shared
+    @Bindable private var alwaysAllowStore = AlwaysAllowStore.shared
     @State private var isConfirmingDeleteAll = false
     @State private var importResultMessage: String?
 
@@ -23,6 +25,8 @@ struct PrivacySettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     dataCard
+                    alwaysAllowCard
+                    webSearchCard
                     yourDataActionsCard
                     linkCard
                 }
@@ -159,13 +163,19 @@ struct PrivacySettingsView: View {
                 privacyRow(
                     icon: "key.fill",
                     title: "Your API key",
-                    detail: "Stored in the macOS Keychain on this device. It's sent only as an authorization header when you send a message."
+                    detail: "Stored locally on this device, in the app's own settings. It's sent only as an authorization header when you send a message."
                 )
                 Divider().overlay(colors.borderSubtle)
                 privacyRow(
                     icon: "paperplane.fill",
                     title: "Messages & attachments",
-                    detail: "Sent to Aqua Devs' API (api.aquadevs.com) to generate a response — that's the only place they go."
+                    detail: "Sent to whichever provider generates the response — any API provider, or a local model on this Mac."
+                )
+                Divider().overlay(colors.borderSubtle)
+                privacyRow(
+                    icon: "magnifyingglass",
+                    title: "Web search",
+                    detail: "When a reply searches the web, that query goes to MIKLIUM (miklium.vercel.app) — a free, independent search API, not Aqua and not any account. Off switch below."
                 )
                 Divider().overlay(colors.borderSubtle)
                 privacyRow(
@@ -173,6 +183,68 @@ struct PrivacySettingsView: View {
                     title: "Chat history",
                     detail: "Stored locally on this Mac. This app does not sync it to any server."
                 )
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Always allow tool calls
+
+    private var alwaysAllowCard: some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checkmark.shield")
+                    .font(.system(size: 14))
+                    .foregroundColor(colors.textSecondary)
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Always allow tool calls")
+                        .font(AppFont.mono(13, weight: .semibold))
+                        .foregroundColor(colors.textPrimary)
+                    Text(alwaysAllowStore.isEnabled
+                        ? "On — code execution and connected plugins (MCP) run without asking each time. Desktop Control always asks, regardless of this setting — it can move your mouse and type on your behalf."
+                        : "Off — the model asks before running code (once per chat) and before every plugin tool call.")
+                        .font(AppFont.sans(12))
+                        .foregroundColor(colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: $alwaysAllowStore.isEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(AppearanceSettings.shared.accentColor)
+            }
+            .padding(18)
+        }
+    }
+
+    // MARK: - Web search
+
+    private var webSearchCard: some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundColor(colors.textSecondary)
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Let models search the web")
+                        .font(AppFont.mono(13, weight: .semibold))
+                        .foregroundColor(colors.textPrimary)
+                    Text(webSearchStore.isEnabled
+                        ? "On — models can search for time-sensitive or current information. See \"Web search\" above for where those queries go."
+                        : "Off — models only know what they already learned during training.")
+                        .font(AppFont.sans(12))
+                        .foregroundColor(colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Toggle("", isOn: $webSearchStore.isEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(AppearanceSettings.shared.accentColor)
             }
             .padding(18)
         }
@@ -203,16 +275,16 @@ struct PrivacySettingsView: View {
                     Text("Full privacy policy")
                         .font(AppFont.mono(14, weight: .semibold))
                         .foregroundColor(colors.textPrimary)
-                    Text("For Aqua Devs' complete data and API policies.")
+                    Text("For Eaon's complete data and API policies.")
                         .font(AppFont.sans(12))
                         .foregroundColor(colors.textSecondary)
                 }
                 Spacer()
                 Button {
-                    NSWorkspace.shared.open(URL(string: "https://aquadevs.com")!)
+                    NSWorkspace.shared.open(URL(string: "https://eaon.dev")!)
                 } label: {
                     HStack(spacing: 5) {
-                        Text("aquadevs.com")
+                        Text("eaon.dev")
                         Image(systemName: "arrow.up.right")
                     }
                     .font(AppFont.mono(12, weight: .medium))

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let conversationMaxWidth: CGFloat = 768
 
@@ -118,19 +119,26 @@ struct ChatHomeView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 24) {
-                        ForEach(viewModel.messages) { message in
-                            MessageCell(
-                                message: message,
-                                isActivelyTyping: viewModel.activeTypingMessageId == message.id,
-                                onRegenerate: { viewModel.startSend() },
-                                onOpenWorkspaceFile: { viewModel.openWorkspace(selecting: $0) },
-                                loadingStatusText: viewModel.activeTypingMessageId == message.id ? viewModel.loadingStatusText : nil
-                            )
-                            .id(message.id)
+                    // Spacing is 0 on the stack itself and applied per-row
+                    // instead — full space before a genuinely new turn
+                    // (a user message, or the first assistant-side reply to
+                    // one), tight space between a turn's own internal steps
+                    // (tool-call chip → tool-result card → continuation
+                    // text), so a multi-step reply reads as one continuous
+                    // answer instead of several separate messages.
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
+                            messageRow(index: index, message: message)
+                        }
+                        if let activityText = viewModel.agentActivityText {
+                            ThinkingIndicator(statusText: activityText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 6)
+                                .transition(.opacity)
                         }
                         Color.clear.frame(height: 8).id(bottomAnchor)
                     }
+                    .animation(.easeOut(duration: 0.15), value: viewModel.agentActivityText)
                     .frame(maxWidth: conversationMaxWidth)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 24)
@@ -139,6 +147,7 @@ struct ChatHomeView: View {
                 }
                 .onChange(of: viewModel.messages.last?.content) { _, _ in scrollToBottom(proxy) }
                 .onChange(of: viewModel.messages.count) { _, _ in scrollToBottom(proxy) }
+                .onChange(of: viewModel.agentActivityText) { _, _ in scrollToBottom(proxy) }
                 .onAppear { scrollToBottom(proxy, animated: false) }
             }
 
@@ -158,6 +167,52 @@ struct ChatHomeView: View {
     }
 
     private let bottomAnchor = "aqua-bottom-anchor"
+
+    // Named rather than left inline in `conversation`'s `ForEach` — a
+    // `MessageCell` call carrying this many parameters, inside a closure
+    // with a computed `id:`, previously tipped SwiftUI's view-builder
+    // type-checker into "unable to type-check this expression in
+    // reasonable time" (the exact failure mode already documented on
+    // `SettingsRootView.modelProvidersSection` for the same reason).
+    @ViewBuilder
+    private func messageRow(index: Int, message: ChatMessage) -> some View {
+        MessageCell(
+            message: message,
+            isActivelyTyping: viewModel.activeTypingMessageId == message.id,
+            onRegenerate: { viewModel.startSend() },
+            onOpenWorkspaceFile: { viewModel.openWorkspace(selecting: $0) },
+            showHeader: isFirstInAssistantRun(index),
+            showFooter: isLastInAssistantRun(index),
+            loadingStatusText: viewModel.activeTypingMessageId == message.id ? viewModel.loadingStatusText : nil
+        )
+        .padding(.top, topSpacing(before: index))
+        .id(message.id)
+    }
+
+    /// Full space (a new turn) before a user message, or the first
+    /// assistant-side message replying to one; tight space between a
+    /// turn's own internal steps (tool-call chip → tool-result card →
+    /// continuation text) so a multi-step reply reads as one continuous
+    /// answer.
+    private func topSpacing(before index: Int) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let messages = viewModel.messages
+        return (!messages[index].isUser && !messages[index - 1].isUser) ? 6 : 24
+    }
+
+    /// True for the first message in a run of consecutive non-user
+    /// messages — an agent turn's opening step. Meaningless for a user
+    /// message itself, which `MessageCell` never reads this for.
+    private func isFirstInAssistantRun(_ index: Int) -> Bool {
+        index == 0 || viewModel.messages[index - 1].isUser
+    }
+
+    /// True for the last message in that same run — the turn's real final
+    /// output, where stats and the copy/regenerate row belong.
+    private func isLastInAssistantRun(_ index: Int) -> Bool {
+        let messages = viewModel.messages
+        return index == messages.count - 1 || messages[index + 1].isUser
+    }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
         if animated {
@@ -248,6 +303,16 @@ struct MessageCell: View {
     var isActivelyTyping: Bool = false
     var onRegenerate: () -> Void = {}
     var onOpenWorkspaceFile: ((String) -> Void)? = nil
+    /// True only for the first assistant-side message in a run of
+    /// consecutive non-user messages (an agent turn) — shows the model
+    /// name/logo once per turn instead of once per internal step, so a
+    /// multi-step tool-use reply reads as one continuous answer instead of
+    /// several separate messages that each restate who's talking.
+    var showHeader: Bool = true
+    /// True only for the last message in that same run — generation stats
+    /// and the copy/regenerate row belong to the turn's real final output,
+    /// not to an intermediate tool-call step.
+    var showFooter: Bool = true
     /// Set by the caller only for the message currently streaming, from
     /// `ChatViewModel.loadingStatusText` — real status text for an Ollama
     /// model still loading. Ollama's server runs independent of this app
@@ -355,16 +420,93 @@ struct MessageCell: View {
     private var assistantMessage: some View {
         if message.isError {
             errorMessage
+        } else if message.isGeneratedImage == true {
+            VStack(alignment: .leading, spacing: 6) {
+                if showHeader { modelAttributionHeader }
+                generatedImageBubble
+            }
         } else {
-            HoverRevealAssistantBody(
-                content: message.content,
-                isActivelyTyping: isActivelyTyping,
-                onRegenerate: onRegenerate,
-                onOpenWorkspaceFile: onOpenWorkspaceFile,
-                loadingStatusText: liveLoadingText,
-                statsCaption: statsCaption
-            )
+            VStack(alignment: .leading, spacing: 6) {
+                if showHeader, !message.content.isEmpty || isActivelyTyping {
+                    modelAttributionHeader
+                }
+                HoverRevealAssistantBody(
+                    content: message.content,
+                    isActivelyTyping: isActivelyTyping,
+                    onRegenerate: onRegenerate,
+                    onOpenWorkspaceFile: onOpenWorkspaceFile,
+                    loadingStatusText: liveLoadingText,
+                    statsCaption: statsCaption,
+                    showFooter: showFooter
+                )
+            }
         }
+    }
+
+    /// Which model actually said this — shown as soon as a reply starts
+    /// appearing, not just once it's done, so it reads as "this is who's
+    /// talking" rather than a completion stat. Respects a renamed nickname
+    /// the same way the model picker itself does, and reuses `BrandLogoView`
+    /// bare (no circular badge chip) so it sits light or gets a real
+    /// company logo depending on the model, without adding visual weight
+    /// this small a label doesn't need.
+    @ViewBuilder
+    private var modelAttributionHeader: some View {
+        if let modelId = message.modelId, !modelId.isEmpty {
+            let displayName = ModelPreferencesStore.shared.nickname(for: modelId)
+                ?? ModelCatalog.displayName(modelId: modelId, apiName: message.modelName)
+            HStack(spacing: 6) {
+                BrandLogoView(brand: ModelCatalog.brand(for: modelId), size: 14)
+                Text(displayName)
+                    .font(AppFont.mono(11, weight: .medium))
+                    .foregroundStyle(colors.textTertiary)
+            }
+        }
+    }
+
+    /// The whole point of this message IS the image — shown large, not as a
+    /// small attachment thumbnail the way a user's upload gets. Bypasses
+    /// `HoverRevealAssistantBody`'s markdown/code-block/tool-chip pipeline
+    /// entirely, since none of that applies to a pure image response.
+    @ViewBuilder
+    private var generatedImageBubble: some View {
+        if let attachment = message.attachments.first, let image = AttachmentStore.loadImage(for: attachment) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 420, maxHeight: 420)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(colors.borderSubtle, lineWidth: 1)
+                    )
+                    .contextMenu {
+                        Button("Save Image As…") { saveGeneratedImage(image, suggestedName: attachment.fileName) }
+                    }
+
+                if !message.content.isEmpty {
+                    Text(message.content)
+                        .font(AppFont.sans(fontSize - 1))
+                        .foregroundStyle(colors.textSecondary)
+                }
+            }
+        } else {
+            Text("This generated image is no longer available.")
+                .font(AppFont.sans(fontSize))
+                .foregroundStyle(colors.textTertiary)
+        }
+    }
+
+    private func saveGeneratedImage(_ image: NSImage, suggestedName: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.allowedContentTypes = [.png]
+        guard panel.runModal() == .OK, let url = panel.url,
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: url)
     }
 
     private var errorMessage: some View {
@@ -493,6 +635,10 @@ private struct HoverRevealAssistantBody: View {
     /// a local model: which backend, whether it needed a fresh load, and
     /// its memory footprint) — nil for messages with nothing to show yet.
     var statsCaption: String? = nil
+    /// False for every step but the last in a multi-step agent turn — an
+    /// intermediate step's own stats/copy/regenerate row would apply to
+    /// just that one piece, not the turn's real final answer.
+    var showFooter: Bool = true
     @State private var isHovered = false
 
     var body: some View {
@@ -505,13 +651,15 @@ private struct HoverRevealAssistantBody: View {
                     loadingStatusText: loadingStatusText
                 )
             }
-            if !isActivelyTyping && !content.isEmpty {
+            if showFooter, !isActivelyTyping && !content.isEmpty {
                 if let statsCaption {
                     Text(statsCaption)
                         .font(AppFont.mono(11))
                         .foregroundStyle(colors.textTertiary)
                 }
-                MessageActionsRow(content: content, onRegenerate: onRegenerate)
+                // Copy should hand back the real answer, not the model's
+                // internal <think> scratchpad riding along in `content`.
+                MessageActionsRow(content: ReasoningExtractor.extract(from: content).visibleContent, onRegenerate: onRegenerate)
                     .opacity(isHovered ? 1 : 0)
                     .animation(.easeOut(duration: 0.12), value: isHovered)
             }

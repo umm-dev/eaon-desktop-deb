@@ -50,7 +50,7 @@ struct AquaProviderSettingsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(colors.backgroundPrimary)
         .onAppear {
-            apiKeyInput = KeychainService.loadAPIKey() ?? ""
+            apiKeyInput = APIKeyStore.loadAPIKey() ?? ""
             AppFocus.activate()
             if chatViewModel.availableModels.isEmpty, !chatViewModel.isLoadingModels {
                 Task { await chatViewModel.fetchModels() }
@@ -124,7 +124,7 @@ struct AquaProviderSettingsView: View {
                     .font(AppFont.mono(14, weight: .semibold))
                     .foregroundColor(colors.textPrimary)
 
-                Text("Your key is stored in the macOS Keychain on this device only and never written to plain-text storage.")
+                Text("Your key stays on this device — saved locally in the app's own settings, sent only as an authorization header when you send a message.")
                     .font(AppFont.sans(12))
                     .foregroundColor(colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -151,7 +151,7 @@ struct AquaProviderSettingsView: View {
                         .foregroundColor(saveFailed ? colors.destructive : confirmationTextColor)
                 }
 
-                if KeychainService.hasAPIKey {
+                if APIKeyStore.hasAPIKey {
                     Label("API key saved on this device", systemImage: "lock.fill")
                         .font(AppFont.mono(12))
                         .foregroundColor(colors.textTertiary)
@@ -341,8 +341,8 @@ struct AquaProviderSettingsView: View {
         saveFailed = false
 
         do {
-            try KeychainService.saveAPIKey(apiKeyInput)
-            saveMessage = "API key saved securely to Keychain."
+            try APIKeyStore.saveAPIKey(apiKeyInput)
+            saveMessage = "API key saved."
             saveFailed = false
         } catch {
             saveMessage = error.localizedDescription

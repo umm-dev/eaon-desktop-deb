@@ -46,6 +46,16 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
     /// Same distinction as `groq` — a gateway to hundreds of other
     /// companies' models via one key, not a model maker itself.
     case openRouter
+    /// Same distinction as `groq`/`openRouter` — hosts other companies'
+    /// (mostly open-source) models, doesn't train its own.
+    case together
+    /// Same distinction as `together`.
+    case fireworks
+    /// Unlike `groq`/`together`/`fireworks`, Cerebras does serve some
+    /// models under its own name (its wafer-scale chips are the product),
+    /// but the models it hosts by default are still other labs' — treated
+    /// the same way here.
+    case cerebras
 
     /// The curated set offered when adding a bring-your-own-key connection —
     /// deliberately not `allCases`. That full list also carries every brand
@@ -57,8 +67,9 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
     /// key for. `aqua` is deliberately excluded — it's the app's own default
     /// backend, not something you bring a key for.
     static let byokPickerBrands: [ProviderBrand] = [
-        .openAI, .anthropic, .google, .meta, .mistral, .deepSeek, .xAI,
-        .groq, .openRouter, .perplexity, .cohere, .nvidia,
+        .openAI, .anthropic, .google, .mistral, .deepSeek, .xAI,
+        .groq, .openRouter, .together, .fireworks, .cerebras,
+        .perplexity, .cohere, .nvidia,
     ]
 
     var companyName: String {
@@ -101,6 +112,9 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
         case .upstage: return "Upstage"
         case .groq: return "Groq"
         case .openRouter: return "OpenRouter"
+        case .together: return "Together AI"
+        case .fireworks: return "Fireworks AI"
+        case .cerebras: return "Cerebras"
         }
     }
 
@@ -139,14 +153,35 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
         case .tii: return "tii"
         case .zeroOneAI: return "zeroone"
         case .openRouter: return "openrouter"
-        case .amazon, .aqua, .cohere, .ai21, .reka, .writer, .liquidAI, .allenAI, .upstage, .groq:
+        // Added 2026-07-08 from Lobe Icons (MIT-licensed, AI-provider-
+        // specific catalog) after simple-icons came up empty for all
+        // seven — verified each asset resolves and is actually that
+        // company's mark (not a same-named unrelated brand) before
+        // bundling. amazon.svg came from simple-icons instead (CC0),
+        // since Lobe's Amazon-adjacent mark is product-specific
+        // (Bedrock) rather than the parent company. groq.svg and
+        // liquidai.svg were mono/currentColor source assets with no
+        // color of their own — patched with an explicit fill (Groq's
+        // real brand orange-red; white for Liquid AI, whose own public
+        // branding is monochrome) since a rasterized NSImage has no
+        // surrounding text-color context for currentColor to resolve
+        // against.
+        case .amazon: return "amazon"
+        case .cohere: return "cohere"
+        case .ai21: return "ai21"
+        case .liquidAI: return "liquidai"
+        case .allenAI: return "allenai"
+        case .upstage: return "upstage"
+        case .groq: return "groq"
+        // `.aqua` never reaches this — BrandLogoView renders its real
+        // AquaMark shape directly instead of an asset file.
+        case .aqua, .reka, .writer, .together, .fireworks, .cerebras:
             // No real, permissively-licensed public mark found for these —
-            // verified against simple-icons' full catalog (2026-07-06)
-            // rather than assumed (Microsoft and IBM were notable exclusions
-            // there, most likely deliberate on their part — both now covered
-            // above from a different source). The SF Symbol +
-            // accent-color fallback below is the honest answer for a brand
-            // with no available logo, not a placeholder to revisit later.
+            // checked against both simple-icons and Lobe Icons (2026-07-08,
+            // together/fireworks/cerebras added 2026-07-12 — same result).
+            // The SF Symbol + accent-color fallback below is the honest
+            // answer for a brand with no available logo, not a placeholder
+            // to revisit later.
             return nil
         }
     }
@@ -191,6 +226,9 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
         case .upstage: return "u.circle.fill"
         case .groq: return "bolt.fill"
         case .openRouter: return "arrow.triangle.branch"
+        case .together: return "link"
+        case .fireworks: return "flame.fill"
+        case .cerebras: return "brain"
         }
     }
 
@@ -263,6 +301,18 @@ enum ProviderBrand: String, Hashable, Codable, CaseIterable {
         case .groq: return Color(hex: "#F55036")
         // Verified official color (simple-icons, 2026-07-07):
         case .openRouter: return Color(hex: "#94A3B8")
+        // No official brand color published anywhere checkable (their own
+        // brand page names a palette but doesn't disclose hex values,
+        // 2026-07-12) — neutral placeholder rather than a guess.
+        case .together: return Color(hex: "#94A3B8")
+        // Same situation as `together` — no disclosed hex found. Orange is
+        // a reasonable, distinct placeholder (fits the name) rather than a
+        // confirmed brand color, same caveat as `groq`.
+        case .fireworks: return Color(hex: "#F97316")
+        // Approximate, sourced from a third-party logo-history write-up,
+        // not Cerebras' own brand guidelines — treat as directional, not
+        // exact.
+        case .cerebras: return Color(hex: "#FF6B00")
         }
     }
 }

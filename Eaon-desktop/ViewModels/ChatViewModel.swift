@@ -40,6 +40,12 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// — nil when not applicable (not local, or the backend doesn't expose
     /// this) rather than a guess.
     var localMemoryBytes: Int64?
+    /// True only for an assistant message whose whole point IS the image in
+    /// `attachments` — not incidental to it, the way a user's uploaded photo
+    /// is. Optional (like `isToolResult`/`wasColdLoad`) so older persisted
+    /// messages decode fine without this key. Rendering shows this image
+    /// large and prominent rather than as a small attachment thumbnail.
+    var isGeneratedImage: Bool?
 }
 
 /// A single saved conversation, shown in the "Your chats" sidebar list.
@@ -72,6 +78,31 @@ struct Project: Identifiable, Codable, Equatable {
     var createdAt = Date()
 }
 
+/// An `eaon:mcp` call awaiting the user's explicit go-ahead — which
+/// service, which tool, and its (pretty-printed) JSON arguments, shown by
+/// `MCPCallConfirmationDialog` so the decision is informed, not a blind
+/// "allow?". See `ChatViewModel.confirmMCPCallIfNeeded(server:tool:argumentsJSON:)`.
+struct PendingMCPCall: Equatable {
+    let serverDisplayName: String
+    let tool: String
+    let argumentsJSON: String
+}
+
+/// A desktop-control action awaiting the user's go-ahead — a one-line
+/// human-readable `summary` ("Move report.pdf → Documents/") plus, for the
+/// open-ended tools, the full `detail` (the shell command or AppleScript
+/// verbatim). Shown by `DesktopCallConfirmationDialog`.
+struct PendingDesktopCall: Equatable {
+    let summary: String
+    let detail: String?
+}
+
+/// The user's answer to a desktop-action prompt. `allowAll` grants the rest
+/// of the conversation, mirroring the coding agent's per-chat run approval.
+enum DesktopConfirmDecision {
+    case allowOnce, allowAll, deny
+}
+
 struct APIModelResponse: Codable {
     let data: [APIModel]
 }
@@ -90,6 +121,12 @@ class ChatViewModel {
     var inputText: String = ""
     var selectedModel: String = ""
     var availableModels: [APIModel] = []
+    /// Aqua's hosted image-generation models — fetched separately from
+    /// `availableModels` because `AquaSupportedModels` (behind
+    /// `apiService.fetchModels()`) is a hand-maintained chat-only allowlist
+    /// that excludes them entirely; this reads the live `type == "image"`
+    /// field directly instead. See `AquaImageModels`.
+    var aquaImageModels: [APIModel] = []
     var isGenerating: Bool = false
     var isLoadingModels = false
     var modelsLoadError: String?
@@ -101,8 +138,35 @@ class ChatViewModel {
     /// moment real content starts arriving. Shown in place of the generic
     /// typing indicator for the local case specifically.
     var loadingStatusText: String?
+    /// What the agent is doing right now between visible message content —
+    /// running a specific tool, searching the web — for the window where a
+    /// step's own text has already finished streaming but the *next* step
+    /// hasn't started yet (the real network call is in flight). Nil the
+    /// rest of the time. Not tied to any one `ChatMessage`, since nothing
+    /// about this phase belongs to a specific message — shown as its own
+    /// small transient row at the bottom of the conversation instead.
+    var agentActivityText: String?
     var pendingAttachments: [MessageAttachment] = []
     var composerNotice: String?
+    /// Non-nil exactly while the run-confirmation dialog should be
+    /// showing — the file path the agent wants to execute. See
+    /// `confirmRunIfNeeded(path:)`.
+    var pendingRunConfirmation: String?
+    /// Non-nil exactly while the MCP call-confirmation dialog should be
+    /// showing. See `confirmMCPCallIfNeeded(server:tool:argumentsJSON:)`.
+    var pendingMCPCallConfirmation: PendingMCPCall?
+    /// Non-nil exactly while the desktop-control confirmation dialog should
+    /// be showing. See `confirmDesktopCallIfNeeded(tool:arguments:)`.
+    var pendingDesktopCallConfirmation: PendingDesktopCall?
+
+    // MARK: - Memory backfill (mining facts from chats that predate turning memory on)
+
+    var isBackfillingMemory = false
+    /// A short status line the Memory settings page shows for the
+    /// duration of a backfill and its final result — progress while
+    /// running, a summary once done. Nil before the first run.
+    var memoryBackfillStatus: String?
+    private var memoryBackfillCancelRequested = false
 
     /// All saved conversations, most-recently-updated first when displayed.
     var conversations: [Conversation] = []
@@ -174,7 +238,15 @@ class ChatViewModel {
             .filter { !ModelPreferencesStore.shared.isHidden($0.id) }
         let localModels = LocalAIManager.shared.syntheticModels
             .filter { !ModelPreferencesStore.shared.isHidden($0.id) }
-        return aquaModels + customModels + localModels
+        // Deduplicated because the same model id can arrive from more than
+        // one source at once — e.g. a BYOK gateway serving deepseek-v4-flash
+        // while Aqua's catalog also lists it. Everything downstream (routing,
+        // provider grouping) is a function of the bare id, so both copies
+        // land in the same picker group — and duplicate ids inside one
+        // ForEach corrupt LazyVStack's layout (the blank-gap /
+        // vanishing-rows-on-scroll bug). Collapsing changes no behavior;
+        // which copy answers a request was already decided by id alone.
+        return Self.deduplicated(aquaModels + customModels + localModels)
     }
 
     /// The actually-selectable set: `allChatCapableModels` minus anything
@@ -198,6 +270,19 @@ class ChatViewModel {
         if LocalAIManager.shared.owns(modelId) { return nil }
         if let config = CustomProviderStore.shared.config(owning: modelId) { return .custom(config.id) }
         return .aqua
+    }
+
+    /// Image-generation models — Aqua's own hosted ones plus any configured
+    /// BYOK/local image connections. Deliberately separate from
+    /// `chatModels`/`allChatCapableModels`: image generation is one
+    /// request/response with none of the chat-specific machinery (context
+    /// window, vision support, tool-calling, conversation history) those
+    /// lists exist to support.
+    var imageModels: [APIModel] {
+        let aqua = aquaImageModels.filter { !ModelPreferencesStore.shared.isHidden($0.id) }
+        let custom = ImageProviderStore.shared.syntheticModels.filter { !ModelPreferencesStore.shared.isHidden($0.id) }
+        let local = LocalAIManager.shared.imageSyntheticModels.filter { !ModelPreferencesStore.shared.isHidden($0.id) }
+        return Self.deduplicated(aqua + custom + local)
     }
 
     /// `chatModels` minus BYOK and local models — Model Compare has its own
@@ -232,6 +317,135 @@ class ChatViewModel {
     /// tool loop from re-posting the conversation forever.
     private static let maxAgentSteps = 16
 
+    // MARK: - Run confirmation (agent code execution is unsandboxed — see WorkspaceRunner)
+
+    private static let approvedRunConversationsKey = "approved_run_conversations"
+    private var runConfirmationContinuation: CheckedContinuation<Bool, Never>?
+
+    private var approvedRunConversationIds: Set<UUID> {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: Self.approvedRunConversationsKey),
+                  let ids = try? JSONDecoder().decode(Set<UUID>.self, from: data) else { return [] }
+            return ids
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            UserDefaults.standard.set(data, forKey: Self.approvedRunConversationsKey)
+        }
+    }
+
+    /// Suspends the agent loop until the user allows or denies running
+    /// generated code in the current conversation — asked once per
+    /// conversation (persisted), never once per run. A conversation with
+    /// no id yet (nothing saved) always asks, since there's nothing to
+    /// remember approval against.
+    private func confirmRunIfNeeded(path: String) async -> Bool {
+        if AlwaysAllowStore.shared.isEnabled { return true }
+        if let id = currentConversationId, approvedRunConversationIds.contains(id) { return true }
+
+        pendingRunConfirmation = path
+        let approved = await withCheckedContinuation { continuation in
+            runConfirmationContinuation = continuation
+        }
+        pendingRunConfirmation = nil
+
+        if approved, let id = currentConversationId {
+            var ids = approvedRunConversationIds
+            ids.insert(id)
+            approvedRunConversationIds = ids
+        }
+        return approved
+    }
+
+    /// Called by the confirmation dialog's Allow/Don't Run buttons.
+    func respondToRunConfirmation(allow: Bool) {
+        runConfirmationContinuation?.resume(returning: allow)
+        runConfirmationContinuation = nil
+    }
+
+    // MARK: - MCP call confirmation (unsandboxed, real external effects)
+
+    private var mcpCallConfirmationContinuation: CheckedContinuation<Bool, Never>?
+
+    /// Unlike `confirmRunIfNeeded`, this asks every single time rather than
+    /// once per conversation — an MCP tool call has real, non-sandboxed
+    /// external consequences on a real account (an issue, a pushed commit,
+    /// a sent email, a charge) that a per-conversation "allow for this
+    /// chat" would too easily rubber-stamp. `AlwaysAllowStore` bypasses this
+    /// entirely when the user has turned it on; this per-call asking is
+    /// only the behavior when that's off.
+    private func confirmMCPCallIfNeeded(server: MCPServerDefinition, tool: String, argumentsJSON: String) async -> Bool {
+        if AlwaysAllowStore.shared.isEnabled { return true }
+        pendingMCPCallConfirmation = PendingMCPCall(serverDisplayName: server.displayName, tool: tool, argumentsJSON: argumentsJSON)
+        let approved = await withCheckedContinuation { continuation in
+            mcpCallConfirmationContinuation = continuation
+        }
+        pendingMCPCallConfirmation = nil
+        return approved
+    }
+
+    /// Called by the confirmation dialog's Allow/Don't Allow buttons.
+    func respondToMCPCallConfirmation(allow: Bool) {
+        mcpCallConfirmationContinuation?.resume(returning: allow)
+        mcpCallConfirmationContinuation = nil
+    }
+
+    // MARK: - Desktop control confirmation (real effects on this Mac)
+
+    private static let approvedDesktopConversationsKey = "approved_desktop_conversations"
+    private var desktopCallConfirmationContinuation: CheckedContinuation<DesktopConfirmDecision, Never>?
+
+    private var approvedDesktopConversationIds: Set<UUID> {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: Self.approvedDesktopConversationsKey),
+                  let ids = try? JSONDecoder().decode(Set<UUID>.self, from: data) else { return [] }
+            return ids
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            UserDefaults.standard.set(data, forKey: Self.approvedDesktopConversationsKey)
+        }
+    }
+
+    /// Read-only tools (`list_directory`) run without asking. Everything
+    /// else asks, unless the user already granted this conversation blanket
+    /// approval via "Allow for This Chat" (persisted per-conversation, like
+    /// the coding agent's run approval). A brand-new unsaved chat has no id
+    /// to remember against, so it always asks.
+    private func confirmDesktopCallIfNeeded(tool: DesktopTool, arguments: [String: Any]) async -> Bool {
+        if tool.isReadOnly { return true }
+        if let id = currentConversationId, approvedDesktopConversationIds.contains(id) { return true }
+
+        pendingDesktopCallConfirmation = PendingDesktopCall(
+            summary: tool.confirmationSummary(arguments: arguments),
+            detail: tool.confirmationDetail(arguments: arguments)
+        )
+        let decision = await withCheckedContinuation { continuation in
+            desktopCallConfirmationContinuation = continuation
+        }
+        pendingDesktopCallConfirmation = nil
+
+        switch decision {
+        case .deny:
+            return false
+        case .allowOnce:
+            return true
+        case .allowAll:
+            if let id = currentConversationId {
+                var ids = approvedDesktopConversationIds
+                ids.insert(id)
+                approvedDesktopConversationIds = ids
+            }
+            return true
+        }
+    }
+
+    /// Called by the desktop confirmation dialog's three buttons.
+    func respondToDesktopCallConfirmation(_ decision: DesktopConfirmDecision) {
+        desktopCallConfirmationContinuation?.resume(returning: decision)
+        desktopCallConfirmationContinuation = nil
+    }
+
     func recordPreviewRuntimeError(_ text: String) {
         let trimmed = String(text.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, pendingPreviewErrors.count < 5, !pendingPreviewErrors.contains(trimmed) else { return }
@@ -257,7 +471,9 @@ class ChatViewModel {
     }
 
     init() {
-        KeychainService.migrateLegacyKeyIfNeeded()
+        // Before anything reads a default: pull data stranded in an old
+        // process-name/bundle-id domain (see LegacyDefaultsMigrator).
+        LegacyDefaultsMigrator.migrateIfNeeded()
         if let saved = UserDefaults.standard.string(forKey: Self.selectedModelKey) {
             selectedModel = saved
         }
@@ -268,7 +484,7 @@ class ChatViewModel {
 
         // No point calling an API that's guaranteed to reject an absent key —
         // onboarding triggers the first real fetch once a key is saved.
-        if KeychainService.hasAPIKey {
+        if APIKeyStore.hasAPIKey {
             Task {
                 await fetchModels()
             }
@@ -583,7 +799,7 @@ class ChatViewModel {
         modelsLoadError = nil
 
         do {
-            availableModels = try await apiService.fetchModels()
+            availableModels = Self.deduplicated(try await apiService.fetchModels())
             reconcileSelectedModel()
         } catch {
             availableModels = []
@@ -591,11 +807,40 @@ class ChatViewModel {
             print("Failed to fetch models: \(error)")
         }
 
+        aquaImageModels = await AquaImageModels.fetchAvailable()
+
         // Refresh what's runnable locally alongside the remote catalog.
         await LocalAIManager.shared.refreshOllamaModels()
         reconcileSelectedModel()
 
         isLoadingModels = false
+    }
+
+    /// Keeps exactly one entry per model id, preferring whichever copy has
+    /// a real display name, preserving first-seen order. Applied both to
+    /// the raw Aqua fetch (the live catalog has returned the same id twice)
+    /// and — the case that actually bites in practice — to the merged
+    /// all-sources list in `allChatCapableModels`, where a BYOK gateway and
+    /// Aqua's catalog can each serve the same id. SwiftUI's `ForEach`
+    /// requires unique ids; duplicates don't render twice so much as
+    /// corrupt the LazyVStack's layout (blank gaps, rows vanishing
+    /// mid-scroll).
+    private static func deduplicated(_ models: [APIModel]) -> [APIModel] {
+        var byId: [String: APIModel] = [:]
+        var order: [String] = []
+        for model in models {
+            if let existing = byId[model.id] {
+                let existingHasName = !(existing.name?.isEmpty ?? true)
+                let newHasName = !(model.name?.isEmpty ?? true)
+                if !existingHasName, newHasName {
+                    byId[model.id] = model
+                }
+            } else {
+                byId[model.id] = model
+                order.append(model.id)
+            }
+        }
+        return order.compactMap { byId[$0] }
     }
 
     func selectModel(_ modelId: String) {
@@ -736,10 +981,74 @@ class ChatViewModel {
         generationTask = nil
     }
 
+    /// Image generation is one request/response — no agent loop, no
+    /// streaming, no tool-calling, no system prompt, no conversation
+    /// history sent upstream. Kept as its own path entirely separate from
+    /// `sendMessage`'s agent loop rather than threading image-awareness
+    /// through that much larger, more delicate pipeline.
+    private func sendImageGenerationMessage(prompt: String) async {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            appendSystemError("Describe the image you want before sending.")
+            return
+        }
+
+        let modelId = selectedModel
+        messages.append(ChatMessage(content: trimmed, isUser: true))
+        StatisticsTracker.shared.recordUserPrompt(modelId: modelId)
+        inputText = ""
+        pendingAttachments = []
+        composerNotice = nil
+        saveMessages()
+
+        isGenerating = true
+        StatisticsTracker.shared.currentGeneratingModel = modelId
+        defer {
+            isGenerating = false
+            StatisticsTracker.shared.currentGeneratingModel = ""
+        }
+
+        let loadingId = UUID()
+        messages.append(ChatMessage(id: loadingId, content: "Generating image…", isUser: false, modelId: modelId))
+        saveMessages()
+
+        do {
+            let result: GeneratedImageResult
+            if let config = ImageProviderStore.shared.config(owning: modelId) {
+                let key = ImageProviderStore.shared.apiKey(for: config.id)
+                result = try await config.generate(model: modelId, prompt: trimmed, apiKey: key)
+            } else if let record = LocalAIManager.shared.record(withId: modelId), record.isImageGeneration == true {
+                result = try await OllamaImageFormat.generate(model: record.requestModelId, prompt: trimmed)
+            } else {
+                guard let aquaKey = APIKeyStore.loadAPIKey(), !aquaKey.isEmpty else {
+                    markError(id: loadingId, text: "Add your Aqua API key in Settings → Aqua API to generate images.")
+                    return
+                }
+                result = try await AquaImageModels.generate(model: modelId, prompt: trimmed, apiKey: aquaKey)
+            }
+
+            let attachment = try AttachmentStore.importImageData(result.data, fileName: result.suggestedFileName)
+            guard let index = messages.firstIndex(where: { $0.id == loadingId }) else { return }
+            messages[index].content = ""
+            messages[index].attachments = [attachment]
+            messages[index].isGeneratedImage = true
+            saveMessages()
+        } catch {
+            markError(id: loadingId, text: error.localizedDescription)
+        }
+    }
+
     func sendMessage() async {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = pendingAttachments
         guard (!text.isEmpty || !attachments.isEmpty), !isGenerating else { return }
+
+        // Image models never appear in `chatModels` at all — this has to be
+        // checked before that guard, not inside it.
+        if imageModels.contains(where: { $0.id == selectedModel }) {
+            await sendImageGenerationMessage(prompt: text)
+            return
+        }
 
         guard !selectedModel.isEmpty, chatModels.contains(where: { $0.id == selectedModel }) else {
             appendSystemError("No chat model selected. Wait for models to load from the Aqua API, then pick one from the menu.")
@@ -754,7 +1063,7 @@ class ChatViewModel {
         let apiKey: String
         if let customConfig {
             guard let customKey = CustomProviderStore.shared.apiKey(for: customConfig.id), !customKey.isEmpty else {
-                appendSystemError("No API key saved for \(customConfig.brand.companyName). Add one in Settings → Custom Providers.")
+                appendSystemError("No API key saved for \(customConfig.displayName). Add one in Settings → Custom Providers.")
                 return
             }
             apiKey = customKey
@@ -762,7 +1071,7 @@ class ChatViewModel {
             // Local servers don't authenticate; they ignore the header.
             apiKey = "local-no-key"
         } else {
-            guard let aquaKey = KeychainService.loadAPIKey(), !aquaKey.isEmpty else {
+            guard let aquaKey = APIKeyStore.loadAPIKey(), !aquaKey.isEmpty else {
                 appendSystemError("Add your Aqua API key in Settings → Aqua API to start chatting.")
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
                 return
@@ -800,7 +1109,18 @@ class ChatViewModel {
 
         for step in 1...Self.maxAgentSteps {
             let outcome = await streamOneAgentStep(customConfig: customConfig, localRecord: localRecord, apiKey: apiKey)
-            guard case .completed(let replyText) = outcome, !Task.isCancelled else { break }
+            guard case .completed(let stepMsgId, let replyText) = outcome, !Task.isCancelled else { break }
+
+            // A "successful" stream that produced literally nothing — no
+            // error thrown, no tokens either — used to leave a permanently
+            // blank bubble with zero explanation. Most often a local model
+            // buckling under a large prompt (e.g. several connected
+            // plugins' tool descriptions); surface it instead of going
+            // silent.
+            if replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                markError(id: stepMsgId, text: "No response was generated. This can happen with a local model under a large prompt — try disconnecting a plugin you're not using right now, or try again.")
+                break
+            }
 
             guard let toolRun = await executeAgentTools(inReplyText: replyText) else { break }
 
@@ -842,12 +1162,133 @@ class ChatViewModel {
         isGenerating = false
         StatisticsTracker.shared.currentGeneratingModel = ""
         refreshWorkspace(streaming: false)
+
+        triggerMemoryExtractionIfNeeded(customConfig: customConfig, localRecord: localRecord, apiKey: apiKey)
+    }
+
+    /// Fires a silent, best-effort background extraction after a turn
+    /// finishes — never blocks or affects the visible chat either way. See
+    /// `MemoryExtractor` for why this is a plain completion call rather
+    /// than tool-calling.
+    private func triggerMemoryExtractionIfNeeded(
+        customConfig: CustomProviderConfig?,
+        localRecord: LocalModelRecord?,
+        apiKey: String
+    ) {
+        guard MemoryStore.shared.isEnabled, MemoryStore.shared.isAutoLearnEnabled else { return }
+        guard let lastUser = messages.last(where: { $0.isUser })?.content, !lastUser.isEmpty,
+              let lastAssistant = messages.last(where: { !$0.isUser && $0.isToolResult != true })?.content,
+              !lastAssistant.isEmpty else { return }
+
+        let aquaApiKey = (customConfig == nil && localRecord == nil) ? apiKey : nil
+        let modelId = selectedModel
+        Task {
+            await MemoryExtractor.run(
+                userText: lastUser,
+                assistantText: lastAssistant,
+                customConfig: customConfig,
+                localRecord: localRecord,
+                aquaApiKey: aquaApiKey,
+                modelId: modelId
+            )
+        }
+    }
+
+    /// Mines every saved conversation for durable facts, not just ones
+    /// going forward — explicit, user-triggered from Settings → Memory,
+    /// since unlike the silent per-turn extraction above this makes one
+    /// real request per conversation and could mean a real number of API
+    /// calls (time, and on a paid model, money) for someone with a long
+    /// chat history. Uses whichever model is currently selected in the
+    /// chat — the same routing precedence (BYOK → local → Aqua) as
+    /// actually sending a message uses.
+    func startMemoryBackfill() {
+        guard !isBackfillingMemory else { return }
+        guard !selectedModel.isEmpty else {
+            memoryBackfillStatus = "Pick a model in the chat first — backfill uses whichever one is currently selected."
+            return
+        }
+
+        let customConfig = CustomProviderStore.shared.config(owning: selectedModel)
+        let localRecord = customConfig == nil ? LocalAIManager.shared.record(withId: selectedModel) : nil
+
+        var aquaApiKey: String?
+        if let customConfig {
+            guard let key = CustomProviderStore.shared.apiKey(for: customConfig.id), !key.isEmpty else {
+                memoryBackfillStatus = "No API key saved for \(customConfig.displayName) — add one in Settings first."
+                return
+            }
+        } else if localRecord == nil {
+            guard let key = APIKeyStore.loadAPIKey(), !key.isEmpty else {
+                memoryBackfillStatus = "Add your Aqua API key first, or switch to a model that already has one."
+                return
+            }
+            aquaApiKey = key
+        }
+
+        guard !conversations.isEmpty else {
+            memoryBackfillStatus = "No saved chats yet to learn from."
+            return
+        }
+
+        isBackfillingMemory = true
+        memoryBackfillCancelRequested = false
+        memoryBackfillStatus = "Starting…"
+        let modelId = selectedModel
+        let candidateConversations = conversations
+
+        Task {
+            let result = await MemoryExtractor.runBackfill(
+                conversations: candidateConversations,
+                customConfig: customConfig,
+                localRecord: localRecord,
+                aquaApiKey: aquaApiKey,
+                modelId: modelId,
+                onProgress: { [weak self] completed, total, newFacts in
+                    self?.memoryBackfillStatus = "Reviewed \(completed) of \(total) chats — \(newFacts) new fact\(newFacts == 1 ? "" : "s") so far…"
+                },
+                isCancelled: { [weak self] in self?.memoryBackfillCancelRequested ?? true }
+            )
+            self.isBackfillingMemory = false
+            self.memoryBackfillStatus = Self.backfillSummary(for: result)
+        }
+    }
+
+    func cancelMemoryBackfill() {
+        memoryBackfillCancelRequested = true
+    }
+
+    private static func backfillSummary(for result: MemoryExtractor.BackfillResult) -> String {
+        let factsPart = "\(result.factsAdded) new fact\(result.factsAdded == 1 ? "" : "s")"
+        if result.stoppedEarly && result.conversationsReviewed < result.conversationsTotal {
+            return "Stopped after \(result.conversationsReviewed) of \(result.conversationsTotal) chats — learned \(factsPart)."
+        }
+        return "Done — reviewed \(result.conversationsReviewed) chat\(result.conversationsReviewed == 1 ? "" : "s"), learned \(factsPart)."
     }
 
     private enum AgentStepOutcome {
-        case completed(String)
+        case completed(id: UUID, text: String)
         case cancelled
         case failed
+    }
+
+    /// Merges connected MCP tools with the built-in web search tool (when
+    /// enabled) into one native `tools` array — nil when both are absent,
+    /// so a plain chat request stays untouched. Web search never needs an
+    /// entry in `nameMap`: `ToolCallAccumulator.fencedBlocks` recognizes
+    /// `WebSearchTool.nativeFunctionName` on its own, before it ever
+    /// consults the map (see that function's doc comment).
+    private static func mergedNativeTools() -> NativeToolConfig? {
+        let mcpConfig = MCPConnectionStore.shared.nativeToolConfig
+        var tools = mcpConfig?.tools ?? []
+        if WebSearchStore.shared.isEnabled {
+            tools.append(WebSearchTool.nativeDefinition)
+        }
+        if DesktopControlStore.shared.isEnabled {
+            tools.append(contentsOf: DesktopControlTool.nativeDefinitions)
+        }
+        guard !tools.isEmpty else { return nil }
+        return NativeToolConfig(tools: tools, nameMap: mcpConfig?.nameMap ?? [:])
     }
 
     /// Streams one assistant reply (one loop step) into its own chat bubble,
@@ -876,20 +1317,25 @@ class ChatViewModel {
         }
         self.typewriter = typewriter
 
+        // Connected plugins + web search (if enabled) ride along as native
+        // API tools (the calling mechanism hosted models are trained on) —
+        // nil when neither is present, so plain chat requests are untouched.
+        let nativeTools = Self.mergedNativeTools()
+
         var outcome: AgentStepOutcome
         do {
             if let customConfig {
-                try await streamCustomCompletion(config: customConfig, apiKey: apiKey, typewriter: typewriter)
+                try await streamCustomCompletion(config: customConfig, apiKey: apiKey, typewriter: typewriter, nativeTools: nativeTools)
             } else if let localRecord {
-                try await streamLocalCompletion(record: localRecord, aiMsgId: aiMsgId, typewriter: typewriter)
+                try await streamLocalCompletion(record: localRecord, aiMsgId: aiMsgId, typewriter: typewriter, nativeTools: nativeTools)
             } else {
-                try await streamCompletion(apiKey: apiKey, aiMessageId: aiMsgId, typewriter: typewriter)
+                try await streamCompletion(apiKey: apiKey, aiMessageId: aiMsgId, typewriter: typewriter, nativeTools: nativeTools)
             }
             typewriter.markStreamFinished()
             await typewriter.waitUntilCaughtUp()
             finalizeGeneration(id: aiMsgId)
             saveMessages()
-            outcome = .completed(messages.first(where: { $0.id == aiMsgId })?.content ?? "")
+            outcome = .completed(id: aiMsgId, text: messages.first(where: { $0.id == aiMsgId })?.content ?? "")
         } catch is CancellationError {
             typewriter.markStreamFinished()
             await typewriter.waitUntilCaughtUp()
@@ -920,17 +1366,55 @@ class ChatViewModel {
         let failureSignature: String?
     }
 
+    /// Mirrors the `read` case's own 12,000-character cap just below —
+    /// unlike file reads, MCP tool results (a repo search, a list of
+    /// issues, an analytics query) had no cap at all until this was
+    /// added. A large result feeding straight back into the next
+    /// request's history is exactly the kind of oversized-body request a
+    /// flaky gateway 502s on, and it silently compounds every further
+    /// round the agent loop takes.
+    private static func boundedToolResultText(_ text: String) -> String {
+        guard text.count > 12_000 else { return text }
+        return String(text.prefix(12_000)) + "\n…(truncated — ask a narrower question if you need what's past this point)"
+    }
+
+    /// An empty/whitespace-only body is a valid "no arguments" call — only
+    /// text that's actually present and NOT valid JSON is an error.
+    private static func parseJSONObject(_ text: String) -> [String: Any]? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [:] }
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object
+    }
+
     /// Executes the run/edit/read/ls tools a reply requested, against a
     /// working snapshot that replays the reply's own events in order — so
     /// each tool sees exactly the file state the model had produced by that
     /// point. Returns nil when the reply requested nothing (loop ends).
     private func executeAgentTools(inReplyText replyText: String) async -> AgentToolRun? {
-        let events = WorkspaceParser.events(from: replyText)
+        // assumeFinal: this text is DONE streaming, so a trailing block
+        // with no closing fence is a model that stopped mid-fence, not a
+        // stream still writing — execute it rather than dropping it.
+        let events = WorkspaceParser.events(from: replyText, assumeFinal: true)
         let hasActions = events.contains { event in
             if case .write = event { return false }
             return true
         }
-        guard hasActions else { return nil }
+        guard hasActions else {
+            // The reply LOOKS like it attempted a tool call (an eaon:/
+            // aqua: fence is present) but nothing parseable came out.
+            // Returning nil here would end the loop with no reply and no
+            // error — the model must instead be told the call didn't
+            // happen, so it can re-emit it correctly.
+            if replyText.contains("```eaon:") || replyText.contains("```aqua:") {
+                return AgentToolRun(
+                    results: "[Tool results — automated, not written by the user]\n\n### tool call\nERROR: a tool block in your reply couldn't be parsed, so nothing was executed. Re-emit it exactly as:\n```eaon:mcp server=\"<server id>\" tool=\"<tool name>\"\n{\"arg\": \"value\"}\n```\nwith the closing ``` fence on its own line.",
+                    failureSignature: nil
+                )
+            }
+            return nil
+        }
 
         // Snapshot of the workspace before this reply (the reply itself is
         // the last message right now).
@@ -984,6 +1468,13 @@ class ChatViewModel {
                     sections.append("### run \(entry.path)\nERROR: can't run this file type. Runnable: .py .js .swift .rb .php .sh .zsh .pl .lua .go — websites preview automatically instead of running.")
                     continue
                 }
+                guard await confirmRunIfNeeded(path: entry.path) else {
+                    sections.append("### run \(entry.path)\nSkipped — you didn't allow running generated code in this conversation.")
+                    WorkspaceRunner.shared.note("✗ run \(entry.path) — not allowed\n", kind: .stderr)
+                    continue
+                }
+                agentActivityText = "Running \(entry.path)…"
+                defer { agentActivityText = nil }
                 let snapshot = ordered.compactMap { byPath[$0] }
                 let outcome = await WorkspaceRunner.shared.agentRun(
                     files: snapshot,
@@ -1015,6 +1506,137 @@ class ChatViewModel {
             case .list:
                 sections.append("### list files\n" + (ordered.isEmpty ? "(no files yet)" : ordered.joined(separator: "\n")))
                 WorkspaceRunner.shared.note("listed files\n", kind: .status)
+
+            case .mcpCall(let serverId, let tool, let argumentsJSON):
+                guard let serverId, let tool else {
+                    sections.append("### mcp\nERROR: missing server=\"...\" and/or tool=\"...\" attribute — e.g. ```eaon:mcp server=\"github\" tool=\"create_issue\"")
+                    continue
+                }
+                guard let server = MCPCatalog.definition(for: serverId), MCPConnectionStore.shared.isConnected(serverId) else {
+                    let connected = MCPConnectionStore.shared.connectedServers.map { "\"\($0.id)\"" }.joined(separator: ", ")
+                    sections.append("### \(tool)\nERROR: \"\(serverId)\" isn't a connected service — nothing was called. The connected server ids are: \(connected.isEmpty ? "(none)" : connected).")
+                    continue
+                }
+                // Validated locally against the tool's real schema BEFORE
+                // the confirmation dialog or any network call — a model
+                // that guessed a tool name or forgot a required argument
+                // gets the exact spec back to self-correct with, and the
+                // user is never asked to approve a call that's already
+                // guaranteed to fail.
+                guard let toolSpec = MCPConnectionStore.shared.tool(server: serverId, named: tool) else {
+                    let available = MCPConnectionStore.shared.tools(for: serverId).map(\.name).joined(separator: ", ")
+                    sections.append("### \(tool)\nERROR: \(server.displayName) has no tool named \"\(tool)\" — nothing was called. Its tools are exactly: \(available)")
+                    continue
+                }
+                guard let arguments = Self.parseJSONObject(argumentsJSON) else {
+                    sections.append("### \(tool)\nERROR: the block body wasn't a valid JSON object — nothing was called.\n\(toolSpec.detailedSpec)")
+                    continue
+                }
+                let missing = toolSpec.requiredParameterNames.filter { arguments[$0] == nil }
+                guard missing.isEmpty else {
+                    sections.append("### \(tool)\nERROR: missing required argument\(missing.count == 1 ? "" : "s"): \(missing.joined(separator: ", ")) — nothing was called.\n\(toolSpec.detailedSpec)")
+                    continue
+                }
+                guard await confirmMCPCallIfNeeded(server: server, tool: tool, argumentsJSON: argumentsJSON) else {
+                    sections.append("### \(tool)\nSkipped — you didn't allow this action.")
+                    WorkspaceRunner.shared.note("✗ \(server.displayName): \(tool) — not allowed\n", kind: .stderr)
+                    continue
+                }
+                agentActivityText = "Running \(server.displayName): \(tool)…"
+                defer { agentActivityText = nil }
+                do {
+                    let result = try await MCPConnectionStore.shared.callTool(server: serverId, name: tool, arguments: arguments)
+                    if result.isError {
+                        // Argument-shaped failures get the full spec so
+                        // the retry is informed; other failures ("repo
+                        // not found") don't need it. Checked against the
+                        // untruncated text — the keyword search is cheap
+                        // and shouldn't miss a match that happened to
+                        // land past the cap.
+                        let lowered = result.textSummary.lowercased()
+                        let looksLikeArgumentError = ["param", "argument", "required", "invalid", "missing", "field", "schema"].contains { lowered.contains($0) }
+                        let specSuffix = looksLikeArgumentError ? "\n\(toolSpec.detailedSpec)" : ""
+                        sections.append("### \(tool)\nERROR (tool reported failure):\n\(Self.boundedToolResultText(result.textSummary))\(specSuffix)")
+                        WorkspaceRunner.shared.note("✗ \(server.displayName): \(tool) — tool error\n", kind: .stderr)
+                    } else {
+                        sections.append("### \(tool)\nOK:\n\(Self.boundedToolResultText(result.textSummary))")
+                        WorkspaceRunner.shared.note("✓ \(server.displayName): \(tool)\n", kind: .status)
+                    }
+                } catch {
+                    sections.append("### \(tool)\nERROR: \(error.localizedDescription)")
+                    WorkspaceRunner.shared.note("✗ \(server.displayName): \(tool) — \(error.localizedDescription)\n", kind: .stderr)
+                }
+
+            case .webSearch(let argumentsJSON):
+                // Belt-and-suspenders: the teaching block and native tool
+                // definition are both withheld once this is off (see
+                // `systemPromptHistory` / `mergedNativeTools`), but a model
+                // can still imitate the fence from its own conversation
+                // history — refuse the call rather than silently searching
+                // anyway after the user turned this off mid-conversation.
+                guard WebSearchStore.shared.isEnabled else {
+                    sections.append("### web search\nERROR: Web search is turned off (Settings → Privacy) — nothing was searched.")
+                    continue
+                }
+                guard let arguments = Self.parseJSONObject(argumentsJSON),
+                      let query = (arguments["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !query.isEmpty else {
+                    sections.append("### web search\nERROR: missing a non-empty \"query\" string — nothing was searched. The block body must be JSON like {\"query\": \"...\"}")
+                    continue
+                }
+                agentActivityText = "Searching the web for \"\(query)\"…"
+                defer { agentActivityText = nil }
+                do {
+                    let results = try await WebSearchService.search(query: query)
+                    sections.append("### web search: \(query)\n\(Self.boundedToolResultText(WebSearchService.formattedResultsForModel(results)))")
+                    WorkspaceRunner.shared.note("✓ searched: \(query)\n", kind: .status)
+                } catch {
+                    sections.append("### web search: \(query)\nERROR: \(error.localizedDescription)")
+                    WorkspaceRunner.shared.note("✗ search failed: \(query) — \(error.localizedDescription)\n", kind: .stderr)
+                }
+
+            case .computerCall(let toolName, let argumentsJSON):
+                // Same belt-and-suspenders as web search: the teaching block
+                // and native definitions are withheld when off, but a model
+                // can still imitate the fence from history — refuse rather
+                // than act after the user turned this off.
+                guard DesktopControlStore.shared.isEnabled else {
+                    sections.append("### computer\nERROR: Computer Control is turned off (Settings → Computer Control) — nothing was done.")
+                    continue
+                }
+                guard let toolName else {
+                    sections.append("### computer\nERROR: missing tool=\"...\" attribute — e.g. ```eaon:computer tool=\"list_directory\"")
+                    continue
+                }
+                guard let tool = DesktopControlTool.tool(named: toolName) else {
+                    let names = DesktopTool.allCases.map(\.rawValue).joined(separator: ", ")
+                    sections.append("### \(toolName)\nERROR: no computer tool named \"\(toolName)\" — nothing was done. The tools are exactly: \(names)")
+                    continue
+                }
+                guard let arguments = Self.parseJSONObject(argumentsJSON) else {
+                    sections.append("### \(toolName)\nERROR: the block body wasn't a valid JSON object — nothing was done.")
+                    continue
+                }
+                let missingArgs = tool.requiredParameterNames.filter { arguments[$0] == nil }
+                guard missingArgs.isEmpty else {
+                    sections.append("### \(toolName)\nERROR: missing required argument\(missingArgs.count == 1 ? "" : "s"): \(missingArgs.joined(separator: ", ")) — nothing was done.")
+                    continue
+                }
+                guard await confirmDesktopCallIfNeeded(tool: tool, arguments: arguments) else {
+                    sections.append("### \(toolName)\nSkipped — you didn't allow this action.")
+                    WorkspaceRunner.shared.note("✗ computer: \(tool.displayName) — not allowed\n", kind: .stderr)
+                    continue
+                }
+                agentActivityText = "Running \(tool.displayName)…"
+                defer { agentActivityText = nil }
+                let desktopResult = await DesktopControlService.execute(tool: tool, arguments: arguments)
+                if desktopResult.isError {
+                    sections.append("### \(toolName)\nERROR:\n\(Self.boundedToolResultText(desktopResult.text))")
+                    WorkspaceRunner.shared.note("✗ computer: \(tool.displayName)\n", kind: .stderr)
+                } else {
+                    sections.append("### \(toolName)\nOK:\n\(Self.boundedToolResultText(desktopResult.text))")
+                    WorkspaceRunner.shared.note("✓ computer: \(tool.displayName)\n", kind: .status)
+                }
             }
         }
 
@@ -1025,32 +1647,92 @@ class ChatViewModel {
         )
     }
 
-    /// The system-message prefix for a request's history — the user's own
+    /// The system-message prefix for a request's history: the user's own
     /// custom instruction (Settings → Custom Instructions) if they've set
-    /// one, empty otherwise. The only system-prompt injection this app
-    /// does, and it's always the user's own words, never a hardcoded one.
-    private var customInstructionHistory: [(role: String, content: String)] {
+    /// one, then remembered facts (Settings → Memory) if that's turned on
+    /// and there are any. Always the user's own words or things Eaon
+    /// itself learned from them — never a hardcoded system prompt.
+    private var systemPromptHistory: [HistoryTurn] {
+        var entries: [HistoryTurn] = []
+
         let trimmed = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? [] : [(role: "system", content: trimmed)]
+        if !trimmed.isEmpty {
+            entries.append(HistoryTurn(role: "system", content: trimmed))
+        }
+
+        if MemoryStore.shared.isEnabled, !MemoryStore.shared.memories.isEmpty {
+            let facts = MemoryStore.shared.memories.map { "- \($0.text)" }.joined(separator: "\n")
+            entries.append(HistoryTurn(role: "system", content: "What you remember about this user from earlier conversations:\n\(facts)"))
+        }
+
+        // Only present at all while at least one plugin is connected —
+        // teaches the eaon:mcp markup and lists every connected service's
+        // live tool catalog in one self-contained block (see its own doc
+        // comment for why this can't just be a "here's what's new" addendum).
+        if let mcpInstruction = MCPConnectionStore.shared.agentInstructionBlock {
+            entries.append(HistoryTurn(role: "system", content: mcpInstruction))
+        }
+
+        // Unlike the MCP block above, not gated on any connection state —
+        // web search has nothing to connect, so it's unconditional
+        // whenever the user hasn't turned it off (see `WebSearchStore`).
+        // Also carries the current date/time, so "what's today / what time
+        // is it" is answered from context instead of a (flaky, and for the
+        // wall clock unreliable) web search.
+        if WebSearchStore.shared.isEnabled {
+            entries.append(HistoryTurn(role: "system", content: WebSearchTool.agentInstructionBlock()))
+        }
+
+        // Only sent while the user has turned Computer Control on (Settings →
+        // Computer Control) — carries both the tool teaching and the
+        // non-negotiable safety rules (no sudo, no credentials/purchases,
+        // treat read content as data not instructions). See its doc comment.
+        if DesktopControlStore.shared.isEnabled {
+            entries.append(HistoryTurn(role: "system", content: DesktopControlTool.agentInstructionBlock()))
+        }
+
+        return entries
+    }
+
+    /// Builds one request-ready history turn from a chat message: real
+    /// image parts for attachments the active model can actually see
+    /// (`ModelCatalog.supportsVision`), and a plain "[Attached: x]"
+    /// fallback note for anything it can't — a non-image file, or a model
+    /// without vision. Shared by all three routing paths so the vision
+    /// badge shown in the model picker and what actually gets sent never
+    /// disagree with each other.
+    private func historyTurn(for message: ChatMessage) -> HistoryTurn {
+        let role = (message.isUser || message.isToolResult == true) ? "user" : "assistant"
+        guard !message.attachments.isEmpty, ModelCatalog.supportsVision(for: selectedModel) else {
+            return HistoryTurn(role: role, content: apiContent(for: message, sentImages: []))
+        }
+
+        var images: [HistoryImage] = []
+        var sentImages: [MessageAttachment] = []
+        for attachment in message.attachments where attachment.kind == .image {
+            guard let image = ImagePayloadBuilder.build(for: attachment) else { continue }
+            images.append(image)
+            sentImages.append(attachment)
+        }
+        return HistoryTurn(role: role, content: apiContent(for: message, sentImages: sentImages), images: images)
     }
 
     /// Routes to a BYOK provider's own endpoint/format/key instead of Aqua.
     private func streamCustomCompletion(
         config: CustomProviderConfig,
         apiKey: String,
-        typewriter: TypewriterStreamController
+        typewriter: TypewriterStreamController,
+        nativeTools: NativeToolConfig? = nil
     ) async throws {
-        var history: [(role: String, content: String)] = customInstructionHistory
-        history += messages.dropLast().map {
-            // Tool results ride back to the model as user turns.
-            (role: ($0.isUser || $0.isToolResult == true) ? "user" : "assistant", content: apiContent(for: $0))
-        }
+        var history: [HistoryTurn] = systemPromptHistory
+        history += messages.dropLast().map { historyTurn(for: $0) }
         try await CustomProviderAPIService().streamCompletion(
             config: config,
             apiKey: apiKey,
             modelId: selectedModel,
             history: history,
-            typewriter: typewriter
+            typewriter: typewriter,
+            nativeTools: nativeTools
         )
     }
 
@@ -1059,7 +1741,7 @@ class ChatViewModel {
     /// model), then streams over the same OpenAI-compatible wire code the
     /// BYOK path uses — local servers speak exactly that dialect (verified
     /// live against both Ollama and llama-server on this machine).
-    private func streamLocalCompletion(record: LocalModelRecord, aiMsgId: UUID, typewriter: TypewriterStreamController) async throws {
+    private func streamLocalCompletion(record: LocalModelRecord, aiMsgId: UUID, typewriter: TypewriterStreamController, nativeTools: NativeToolConfig? = nil) async throws {
         // A real pre-flight check, not a guess: Ollama runs independent of
         // this app, so it merely being reachable says nothing about whether
         // *this* model is already resident — only `/api/ps` does. llama.cpp/
@@ -1091,10 +1773,8 @@ class ChatViewModel {
         // this same span can't be used the same way — handled below.
         let llamaCppMlxLoadDuration = Date().timeIntervalSince(loadStart)
 
-        var history: [(role: String, content: String)] = customInstructionHistory
-        history += messages.dropLast().map {
-            (role: ($0.isUser || $0.isToolResult == true) ? "user" : "assistant", content: apiContent(for: $0))
-        }
+        var history: [HistoryTurn] = systemPromptHistory
+        history += messages.dropLast().map { historyTurn(for: $0) }
 
         let ephemeralConfig = CustomProviderConfig(
             brand: ModelCatalog.brand(for: record.requestModelId),
@@ -1107,7 +1787,11 @@ class ChatViewModel {
             apiKey: "local-no-key",
             modelId: record.requestModelId,
             history: history,
-            typewriter: typewriter
+            typewriter: typewriter,
+            // Local servers (Ollama/llama.cpp) accept the tools parameter
+            // for tool-trained models; the service retries without it for
+            // models that reject it, so this can't break plain local chat.
+            nativeTools: nativeTools
         )
 
         loadingStatusText = nil
@@ -1132,11 +1816,19 @@ class ChatViewModel {
         }
     }
 
-    private func apiContent(for message: ChatMessage) -> String {
+    /// `sentImages` — attachments already carried as real image parts on
+    /// this same turn — are excluded from the fallback note; everything
+    /// else (non-image files, or images the active model can't see)
+    /// still gets the plain "[Attached: x]" text so nothing is silently
+    /// dropped.
+    private func apiContent(for message: ChatMessage, sentImages: [MessageAttachment]) -> String {
         let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.attachments.isEmpty else { return text }
+        let remaining = message.attachments.filter { attachment in
+            !sentImages.contains { $0.id == attachment.id }
+        }
+        guard !remaining.isEmpty else { return text }
 
-        let attachmentNote = attachmentFallbackText(for: message.attachments)
+        let attachmentNote = attachmentFallbackText(for: remaining)
         if text.isEmpty { return attachmentNote }
         return text + "\n\n" + attachmentNote
     }
@@ -1149,7 +1841,8 @@ class ChatViewModel {
     private func streamCompletion(
         apiKey: String,
         aiMessageId: UUID,
-        typewriter: TypewriterStreamController
+        typewriter: TypewriterStreamController,
+        nativeTools: NativeToolConfig? = nil
     ) async throws {
         var request = URLRequest(url: AquaAPI.chatCompletionsURL)
         request.httpMethod = "POST"
@@ -1157,41 +1850,38 @@ class ChatViewModel {
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let trimmedInstructions = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        var apiMessages: [[String: String]] = trimmedInstructions.isEmpty
-            ? []
-            : [["role": "system", "content": trimmedInstructions]]
-        apiMessages += messages.dropLast().map {
-            [
-                // Tool results ride back to the model as user turns.
-                "role": ($0.isUser || $0.isToolResult == true) ? "user" : "assistant",
-                "content": apiContent(for: $0),
-            ]
-        }
+        var apiMessages: [[String: Any]] = systemPromptHistory.map(\.openAICompatibleJSON)
+        apiMessages += messages.dropLast().map { historyTurn(for: $0).openAICompatibleJSON }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": selectedModel,
             "messages": apiMessages,
             "stream": true,
         ]
+        if let nativeTools {
+            body["tools"] = nativeTools.tools
+        }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
-        }
+        let (bytes, httpResponse) = try await TransientHTTPRetry.send(request)
 
         if httpResponse.statusCode != 200 {
             let errorBody = try await readErrorBody(from: bytes)
+            // Same safeguard as the BYOK path: a backend/model that
+            // rejects the tools parameter must not break chat — retry
+            // once without it; the fenced-markup channel still works.
+            if nativeTools != nil, (400...422).contains(httpResponse.statusCode), errorBody.lowercased().contains("tool") {
+                try await streamCompletion(apiKey: apiKey, aiMessageId: aiMessageId, typewriter: typewriter, nativeTools: nil)
+                return
+            }
             throw APIClientError.httpError(status: httpResponse.statusCode, message: errorBody)
         }
 
         let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? ""
 
         if contentType.contains("text/event-stream") || contentType.contains("application/x-ndjson") {
-            try await consumeStream(bytes, typewriter: typewriter)
+            try await consumeStream(bytes, typewriter: typewriter, nativeTools: nativeTools)
             return
         }
 
@@ -1203,18 +1893,41 @@ class ChatViewModel {
 
         if let json = try? JSONSerialization.jsonObject(with: collected) as? [String: Any],
            let choices = json["choices"] as? [[String: Any]],
-           let message = choices.first?["message"] as? [String: Any],
-           let content = message["content"] as? String {
-            typewriter.append(content)
-            StatisticsTracker.shared.recordGeneratedCharacters(content.count)
-            return
+           let message = choices.first?["message"] as? [String: Any] {
+            var sawAny = false
+            let reasoning = (message["reasoning_content"] as? String) ?? (message["reasoning"] as? String)
+            if let reasoning, !reasoning.isEmpty {
+                sawAny = true
+                typewriter.append("<think>\(reasoning)</think>")
+                StatisticsTracker.shared.recordGeneratedCharacters(reasoning.count)
+            }
+            if let content = message["content"] as? String, !content.isEmpty {
+                sawAny = true
+                typewriter.append(content)
+                StatisticsTracker.shared.recordGeneratedCharacters(content.count)
+            }
+            if let nativeTools, let calls = message["tool_calls"] as? [[String: Any]] {
+                var accumulator = ToolCallAccumulator()
+                accumulator.ingest(complete: calls)
+                if let fences = accumulator.fencedBlocks(nameMap: nativeTools.nameMap) {
+                    sawAny = true
+                    typewriter.append(fences)
+                }
+            }
+            if sawAny { return }
         }
 
         let fallbackText = String(data: collected, encoding: .utf8) ?? "Unexpected response from Aqua API."
         throw APIClientError.unexpectedResponse(fallbackText)
     }
 
-    private func consumeStream(_ bytes: URLSession.AsyncBytes, typewriter: TypewriterStreamController) async throws {
+    private func consumeStream(
+        _ bytes: URLSession.AsyncBytes,
+        typewriter: TypewriterStreamController,
+        nativeTools: NativeToolConfig? = nil
+    ) async throws {
+        var toolCalls = ToolCallAccumulator()
+        let reasoningBridge = ReasoningDeltaBridge()
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
 
@@ -1224,13 +1937,26 @@ class ChatViewModel {
             guard let data = payload.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let content = delta["content"] as? String else {
+                  let delta = choices.first?["delta"] as? [String: Any] else {
                 continue
             }
 
-            typewriter.append(content)
-            StatisticsTracker.shared.recordGeneratedCharacters(content.count)
+            toolCalls.ingest(delta: delta)
+
+            let reasoning = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String)
+            guard let combined = reasoningBridge.text(reasoning: reasoning, content: delta["content"] as? String) else { continue }
+            typewriter.append(combined)
+            StatisticsTracker.shared.recordGeneratedCharacters(combined.count)
+        }
+
+        if let closing = reasoningBridge.closeIfNeeded() {
+            typewriter.append(closing)
+        }
+
+        // Native calls become eaon:mcp fences on the same message — one
+        // downstream pipeline for both calling channels.
+        if let nativeTools, let fences = toolCalls.fencedBlocks(nameMap: nativeTools.nameMap) {
+            typewriter.append(fences)
         }
 
         if !typewriter.hasContent {
@@ -1313,11 +2039,82 @@ enum APIClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .httpError(let status, let message):
-            return "API error (\(status)): \(message)"
+            let base = "API error (\(status)): \(message)"
+            // 5xx (incl. Cloudflare's 52x) is an upstream/gateway failure —
+            // the request never reached a healthy model. It's the provider
+            // having a temporary problem with THIS model, not something the
+            // user got wrong or can fix by re-sending the same thing, so
+            // point them at the remedy that actually works: another model.
+            // (Verified 2026-07-10: deepseek-v4-pro was 502ing on Aqua for
+            // every request while other models answered normally.)
+            if (500...599).contains(status) {
+                return base + "\n\nThis usually means the provider is having a temporary problem with this model — not something on your end. Try again in a moment, or switch to a different model from the menu above."
+            }
+            return base
         case .unexpectedResponse(let message):
             return message
         case .emptyResponse:
             return "The model returned an empty response. Try another model."
+        }
+    }
+}
+
+/// Shared by every streaming path (Aqua, BYOK, local). 502/503/504 are
+/// classic gateway hiccups — an upstream restarting, a momentary overload
+/// behind a proxy — not something the request or the user got wrong, and
+/// they showed up reliably right after a tool call: the follow-up request
+/// (now carrying the tool's results, and the `tools` schema on every
+/// turn) is larger and slower than a bare chat message, which is exactly
+/// the shape of request a flaky gateway drops. Retried automatically
+/// with backoff before ever reaching the user — dying on the first one
+/// is what turned "brief blip" into "the model quit."
+///
+/// Deliberately scoped to ONLY the initial request + status line — never
+/// wraps stream-body reading. A 502 that somehow arrived mid-stream is
+/// NOT retried here, since replaying the whole request could duplicate
+/// tokens already appended to the typewriter.
+enum TransientHTTPRetry {
+    private static let retryableStatuses: Set<Int> = [502, 503, 504]
+
+    /// Backoff before attempt N (1-indexed gap): 400ms, 800ms, 1.6s, 3.2s —
+    /// exponential, capped. Chosen after watching Aqua's gateway alternate
+    /// 502 and 200 on the *same* request within a couple of seconds during a
+    /// real origin flap: three quick tries (the old ~1.5s total) fell inside
+    /// that window and surfaced a hard error the very next retry would have
+    /// cleared. Five tries spanning ~6s ride the flap out invisibly, while a
+    /// genuinely sustained outage still ends in the real error rather than
+    /// hanging the user indefinitely.
+    private static func backoffMilliseconds(beforeAttempt attempt: Int) -> Int {
+        min(3200, 400 * (1 << (attempt - 1)))
+    }
+
+    static func send(_ request: URLRequest, maxAttempts: Int = 5) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+        var attempt = 1
+        while true {
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            guard retryableStatuses.contains(http.statusCode), attempt < maxAttempts else {
+                return (bytes, http)
+            }
+            try? await Task.sleep(for: .milliseconds(backoffMilliseconds(beforeAttempt: attempt)))
+            attempt += 1
+        }
+    }
+
+    /// Non-streaming twin of `send`, for plain request/response calls like
+    /// the model-list fetch — which had no retry at all, so a single gateway
+    /// blip during a flap left the model picker empty even though the very
+    /// next request would have loaded it.
+    static func sendData(_ request: URLRequest, maxAttempts: Int = 5) async throws -> (Data, HTTPURLResponse) {
+        var attempt = 1
+        while true {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            guard retryableStatuses.contains(http.statusCode), attempt < maxAttempts else {
+                return (data, http)
+            }
+            try? await Task.sleep(for: .milliseconds(backoffMilliseconds(beforeAttempt: attempt)))
+            attempt += 1
         }
     }
 }

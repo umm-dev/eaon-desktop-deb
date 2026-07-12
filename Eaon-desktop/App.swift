@@ -24,6 +24,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             await UpdateChecker.shared.checkOnLaunch()
         }
+        // Silent, same as above — a stale/expired plugin token shouldn't
+        // greet the user with an error before they've asked for anything,
+        // it should just leave that Plugins row showing "Connect" again.
+        Task { @MainActor in
+            await MCPConnectionStore.shared.reconnectAllAtLaunch()
+        }
+        // Restarts the local API server if it was left on last session —
+        // `applySettings()` reads `LocalAPIServerStore.isEnabled` itself,
+        // so this is a no-op when the user never turned it on.
+        Task { @MainActor in
+            LocalAPIServer.shared.applySettings()
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -49,6 +61,18 @@ struct EaonDesktopApp: App {
         .commands {
             SidebarCommands()
         }
+
+        // A real, separate app window (not a modal sheet, not the system
+        // browser) for viewing a model's actual page — one per distinct URL;
+        // opening the same URL twice brings the existing pop-up forward
+        // instead of duplicating it, which is `WindowGroup(for:)`'s default
+        // behavior.
+        WindowGroup("Model Page", for: URL.self) { $url in
+            if let url {
+                ModelBrowserWindow(url: url)
+            }
+        }
+        .defaultSize(width: 920, height: 720)
     }
 }
 
@@ -105,7 +129,15 @@ final class WindowChrome {
     static let insetX: CGFloat = 18
     static let insetDown: CGFloat = 21
 
+    /// Width of the resized titlebar container — just enough to cover the
+    /// three nudged lights plus hover padding, deliberately NOT the full
+    /// window width: the taller strip must not sit over (and steal events
+    /// from) real content beside the lights, like the sidebar header's own
+    /// buttons.
+    private static let containerWidth: CGFloat = 100
+
     private var originalOrigins: [NSWindow.ButtonType: CGPoint] = [:]
+    private var originalContainerHeight: CGFloat?
     private var observing = false
 
     func apply(to window: NSWindow) {
@@ -117,15 +149,69 @@ final class WindowChrome {
 
         if !observing {
             observing = true
-            NotificationCenter.default.addObserver(
-                forName: NSWindow.didResizeNotification, object: window, queue: .main
-            ) { [weak self] _ in
-                self?.repositionButtons(in: window)
+            // Resize is when AppKit re-lays-out the titlebar to factory
+            // positions; key/main changes redraw the lights and can do the
+            // same, so re-apply on all of them.
+            for name: Notification.Name in [
+                NSWindow.didResizeNotification,
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didResignKeyNotification,
+                NSWindow.didExitFullScreenNotification,
+            ] {
+                NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self] _ in
+                    self?.repositionButtons(in: window)
+                }
             }
         }
     }
 
     private func repositionButtons(in window: NSWindow) {
+        // In fullscreen the system owns the buttons (they live in the
+        // auto-revealing menubar strip) — moving them there breaks them.
+        guard !window.styleMask.contains(.fullScreen) else { return }
+
+        // A moved button stays fully VISIBLE outside its parent's frame
+        // (the titlebar doesn't clip drawing) but hover tracking and
+        // clicks only land on the part still inside the parent — moving
+        // the lights 21pt below a 28pt-tall titlebar container left a
+        // ~1pt clickable sliver at their top edge. So the container has
+        // to move/grow with them: extend its height by the downward
+        // nudge, keeping the buttons at the same factory offset from its
+        // (now lower) bottom edge — identical on-screen spot, but fully
+        // inside the hit-testable area.
+        if let anyButton = window.standardWindowButton(.closeButton),
+           let container = anyButton.superview?.superview,
+           let themeFrame = container.superview {
+            if originalContainerHeight == nil, container.frame.height > 0 {
+                originalContainerHeight = container.frame.height
+            }
+            if let baseHeight = originalContainerHeight {
+                let height = baseHeight + Self.insetDown
+                container.frame = CGRect(
+                    x: 0,
+                    y: themeFrame.bounds.height - height,
+                    width: Self.containerWidth,
+                    height: height
+                )
+            }
+
+            // The container holds an _NSTitlebarDecorationView (verified by
+            // dumping the live hierarchy) that draws the system's rounded
+            // titlebar decoration sized to the container — full-width it's
+            // invisible against the window edge, but shrunk to the 100pt
+            // frame above and nudged down over the sidebar it renders as a
+            // stray rounded outline floating over the content. Hidden by
+            // matching the class name, since the class is private; done
+            // inside this notification-driven method (not just once)
+            // because AppKit can re-show it on resize/key changes.
+            for subview in container.subviews
+            where String(describing: type(of: subview)).contains("Decoration") {
+                subview.isHidden = true
+            }
+        }
+
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for type in types {
             guard let button = window.standardWindowButton(type) else { continue }
@@ -135,8 +221,12 @@ final class WindowChrome {
                 originalOrigins[type] = button.frame.origin
             }
             guard let base = originalOrigins[type] else { continue }
-            // AppKit's y grows upward, so "down" on screen means a smaller y.
-            button.setFrameOrigin(CGPoint(x: base.x + Self.insetX, y: base.y - Self.insetDown))
+            // No explicit downward nudge here anymore: the container's
+            // bottom edge itself moved down by insetDown, so keeping the
+            // factory y inside it lands the button insetDown lower on
+            // screen — the same place the old code put it, minus the
+            // dead hit-area.
+            button.setFrameOrigin(CGPoint(x: base.x + Self.insetX, y: base.y))
         }
     }
 }

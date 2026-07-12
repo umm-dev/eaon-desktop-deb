@@ -1,6 +1,261 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Run confirmation dialog
+
+/// Shown the first time in a conversation the coding agent wants to
+/// actually execute a file — it runs with the user's full permissions, no
+/// sandbox, so this is a real decision, not a formality. Approving covers
+/// the rest of *this* conversation only; a new chat asks again.
+struct RunConfirmationDialog: View {
+    @Environment(\.themeColors) private var colors
+    let path: String
+    let onAllow: () -> Void
+    let onDeny: () -> Void
+
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            colors.backgroundOverlay
+                .ignoresSafeArea()
+                .onTapGesture { onDeny() }
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.orange)
+                    Text("Run generated code?")
+                        .font(AppFont.mono(18, weight: .semibold))
+                        .foregroundStyle(colors.textPrimary)
+                }
+                .padding(.bottom, 14)
+
+                (Text("The model wants to run ")
+                    .foregroundStyle(colors.textSecondary)
+                 + Text(path)
+                    .foregroundStyle(colors.textPrimary)
+                    .fontWeight(.semibold)
+                 + Text(" on your Mac, with your full user permissions and no sandbox — nothing is isolated from the rest of your system. Allowing this covers the rest of this conversation; a new chat asks again.")
+                    .foregroundStyle(colors.textSecondary))
+                    .font(AppFont.sans(14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 24)
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    DialogButton(title: "Don't Run", style: .secondary) { onDeny() }
+                    DialogButton(title: "Allow for This Chat", style: .primary) { onAllow() }
+                }
+            }
+            .padding(24)
+            .frame(width: 440)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(colors.backgroundPopover)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(colors.borderSubtle, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 40, y: 16)
+            .scaleEffect(appeared ? 1 : 0.94)
+            .opacity(appeared ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.18)) { appeared = true }
+        }
+    }
+}
+
+// MARK: - MCP call confirmation dialog
+
+/// Shown before every single GitHub tool call the model wants to make —
+/// unlike `RunConfirmationDialog`, this asks every time rather than once
+/// per conversation, because the action itself happens on GitHub, not
+/// sandboxed on this Mac (an issue, a comment, a pushed commit — all real,
+/// all visible to other people, none of it undoable by closing the app).
+struct MCPCallConfirmationDialog: View {
+    @Environment(\.themeColors) private var colors
+    let call: PendingMCPCall
+    let onAllow: () -> Void
+    let onDeny: () -> Void
+
+    @State private var appeared = false
+
+    private var prettyArguments: String {
+        guard let data = call.argumentsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: pretty, encoding: .utf8) else {
+            return call.argumentsJSON.isEmpty ? "(no arguments)" : call.argumentsJSON
+        }
+        return text
+    }
+
+    var body: some View {
+        ZStack {
+            colors.backgroundOverlay
+                .ignoresSafeArea()
+                .onTapGesture { onDeny() }
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.orange)
+                    Text("Run this GitHub action?")
+                        .font(AppFont.mono(18, weight: .semibold))
+                        .foregroundStyle(colors.textPrimary)
+                }
+                .padding(.bottom, 14)
+
+                (Text("The model wants to call ")
+                    .foregroundStyle(colors.textSecondary)
+                 + Text(call.tool)
+                    .foregroundStyle(colors.textPrimary)
+                    .fontWeight(.semibold)
+                 + Text(" on your connected \(call.serverDisplayName) account. This happens for real — nothing here is sandboxed or reversible by closing the app.")
+                    .foregroundStyle(colors.textSecondary))
+                    .font(AppFont.sans(14))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 14)
+
+                ScrollView {
+                    Text(prettyArguments)
+                        .font(AppFont.mono(12))
+                        .foregroundStyle(colors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: 140)
+                .background(colors.backgroundInput)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(colors.borderSubtle, lineWidth: 1)
+                )
+                .padding(.bottom, 24)
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    DialogButton(title: "Don't Allow", style: .secondary) { onDeny() }
+                    DialogButton(title: "Allow", style: .primary) { onAllow() }
+                }
+            }
+            .padding(24)
+            .frame(width: 440)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(colors.backgroundPopover)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(colors.borderSubtle, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 40, y: 16)
+            .scaleEffect(appeared ? 1 : 0.94)
+            .opacity(appeared ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.18)) { appeared = true }
+        }
+    }
+}
+
+// MARK: - Desktop control confirmation dialog
+
+/// Shown before every action that changes something on this Mac — a move, a
+/// trashed file, a shell command, an app being driven. `list_directory` (the
+/// one read-only tool) never reaches here. "Allow for This Chat" grants the
+/// task autonomy for the rest of this conversation only; a new chat starts
+/// fresh. The full command or script is shown verbatim, so nothing risky
+/// hides behind a tidy one-line summary.
+struct DesktopCallConfirmationDialog: View {
+    @Environment(\.themeColors) private var colors
+    let call: PendingDesktopCall
+    let onAllowOnce: () -> Void
+    let onAllowAll: () -> Void
+    let onDeny: () -> Void
+
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            colors.backgroundOverlay
+                .ignoresSafeArea()
+                .onTapGesture { onDeny() }
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.orange)
+                    Text("Allow this action on your Mac?")
+                        .font(AppFont.mono(18, weight: .semibold))
+                        .foregroundStyle(colors.textPrimary)
+                }
+                .padding(.bottom, 14)
+
+                Text(call.summary)
+                    .font(AppFont.sans(15, weight: .semibold))
+                    .foregroundStyle(colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, call.detail == nil ? 14 : 10)
+
+                if let detail = call.detail {
+                    ScrollView {
+                        Text(detail)
+                            .font(AppFont.mono(12))
+                            .foregroundStyle(colors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 140)
+                    .background(colors.backgroundInput)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(colors.borderSubtle, lineWidth: 1)
+                    )
+                    .padding(.bottom, 14)
+                }
+
+                Text("This runs on your Mac with your permissions — real, and not undone by closing the app (though deletions go to the Trash, so they're recoverable). \"Allow for This Chat\" stops the asking for the rest of this conversation.")
+                    .font(AppFont.sans(13))
+                    .foregroundStyle(colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 22)
+
+                HStack(spacing: 10) {
+                    DialogButton(title: "Don't Allow", style: .secondary) { onDeny() }
+                    Spacer()
+                    DialogButton(title: "Allow for This Chat", style: .secondary) { onAllowAll() }
+                    DialogButton(title: "Allow", style: .primary) { onAllowOnce() }
+                }
+            }
+            .padding(24)
+            .frame(width: 460)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(colors.backgroundPopover)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(colors.borderSubtle, lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 40, y: 16)
+            .scaleEffect(appeared ? 1 : 0.94)
+            .opacity(appeared ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.18)) { appeared = true }
+        }
+    }
+}
+
 // MARK: - Delete chat dialog
 
 struct DeleteChatDialog: View {
@@ -556,9 +811,17 @@ struct ShareChatSheet: View {
 
     @State private var appeared = false
     @State private var copied = false
+    @State private var comingSoonTarget: String?
 
     private var firstUserPrompt: String {
         conversation.messages.first { $0.isUser }?.content ?? conversation.title
+    }
+
+    private func flashComingSoon(_ target: String) {
+        withAnimation(.uiEaseOut(duration: 0.15)) { comingSoonTarget = target }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.uiEaseOut(duration: 0.15)) { comingSoonTarget = nil }
+        }
     }
 
     var body: some View {
@@ -590,15 +853,24 @@ struct ShareChatSheet: View {
                 previewCard.padding(.bottom, 22)
 
                 HStack(spacing: 22) {
-                    ShareTarget(icon: copied ? "checkmark" : "link", label: copied ? "Copied" : "Copy link") {
+                    // There's no hosted share-page backend behind a link yet
+                    // — copying the transcript itself is a real action today
+                    // instead of a URL that would 404.
+                    ShareTarget(icon: copied ? "checkmark" : "doc.on.doc", label: copied ? "Copied" : "Copy chat") {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString("https://aquadevs.com/share/\(conversation.id.uuidString.prefix(8).lowercased())", forType: .string)
+                        NSPasteboard.general.setString(ChatViewModel.exportConversationMarkdown(conversation), forType: .string)
                         copied = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                     }
-                    ShareTarget(icon: "bird", label: "X") {}
-                    ShareTarget(icon: "briefcase", label: "LinkedIn") {}
-                    ShareTarget(icon: "bubble.left.and.bubble.right", label: "Reddit") {}
+                    ShareTarget(icon: comingSoonTarget == "X" ? "clock" : "bird", label: comingSoonTarget == "X" ? "Soon" : "X") {
+                        flashComingSoon("X")
+                    }
+                    ShareTarget(icon: comingSoonTarget == "LinkedIn" ? "clock" : "briefcase", label: comingSoonTarget == "LinkedIn" ? "Soon" : "LinkedIn") {
+                        flashComingSoon("LinkedIn")
+                    }
+                    ShareTarget(icon: comingSoonTarget == "Reddit" ? "clock" : "bubble.left.and.bubble.right", label: comingSoonTarget == "Reddit" ? "Soon" : "Reddit") {
+                        flashComingSoon("Reddit")
+                    }
                     Spacer()
                 }
                 .padding(.bottom, 18)

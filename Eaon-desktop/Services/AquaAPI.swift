@@ -14,9 +14,14 @@ enum AquaAPI {
 
 struct AquaAPIService {
     func fetchModels() async throws -> [APIModel] {
-        let (data, response) = try await URLSession.shared.data(from: AquaAPI.modelsURL)
+        var request = URLRequest(url: AquaAPI.modelsURL)
+        request.timeoutInterval = 30
+        // Same gateway that flaps 502 on chat completions serves this list —
+        // retry transient 5xx so one blip during an origin hiccup doesn't
+        // leave the model picker empty.
+        let (data, response) = try await TransientHTTPRetry.sendData(request)
 
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        guard response.statusCode == 200 else {
             throw AquaAPIError.badResponse
         }
 

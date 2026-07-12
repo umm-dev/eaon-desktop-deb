@@ -1,110 +1,179 @@
 import SwiftUI
 
-/// The floating "New Version" card — download icon, version headline, and
-/// the Show Release Notes / Remind Me Later / Update Now row, matching the
-/// reference. Appears bottom-trailing over the chat, never blocks anything.
+/// The floating "New Version" card — icon badge, version headline, release
+/// notes, and the Remind Me Later / Update Now row. Appears bottom-trailing
+/// over the chat, never blocks anything.
 struct UpdateBanner: View {
     @Environment(\.themeColors) private var colors
     @Bindable private var checker = UpdateChecker.shared
     let manifest: UpdateManifest
 
-    @State private var showingNotes = false
+    private var accent: Color { AppearanceSettings.shared.accentColor }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "arrow.down.to.line")
+        VStack(alignment: .leading, spacing: 16) {
+            header
+
+            if let notes = manifest.releaseNotes, !notes.isEmpty {
+                releaseNotes(notes)
+            }
+
+            Divider().overlay(colors.borderSubtle)
+
+            statusArea
+        }
+        .padding(20)
+        .frame(width: 400)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(colors.backgroundElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(colors.borderSubtle, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 28, y: 10)
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(accent.opacity(0.16))
+                    .frame(width: 40, height: 40)
+                Image(systemName: iconName)
                     .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .symbolEffect(.bounce, value: checker.downloadState == .relaunching)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Eaon \(manifest.latestVersion)")
+                    .font(AppFont.mono(16, weight: .semibold))
                     .foregroundStyle(colors.textPrimary)
-                    .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("New Version \(manifest.latestVersion)")
-                        .font(AppFont.mono(15, weight: .semibold))
-                        .foregroundStyle(colors.textPrimary)
-                    Text("Update Available")
-                        .font(AppFont.mono(13))
-                        .foregroundStyle(colors.textSecondary)
-                }
+                Text(statusHeadline)
+                    .font(AppFont.mono(12, weight: .medium))
+                    .foregroundStyle(colors.textTertiary)
             }
 
-            if showingNotes, let notes = manifest.releaseNotes, !notes.isEmpty {
-                ScrollView {
-                    Text(notes)
-                        .font(AppFont.sans(12))
-                        .foregroundStyle(colors.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 140)
-            }
+            Spacer(minLength: 0)
 
-            switch checker.downloadState {
-            case .downloading(let fraction):
-                VStack(alignment: .leading, spacing: 6) {
-                    if let fraction {
-                        ProgressView(value: fraction)
-                        Text("Downloading… \(Int(fraction * 100))%")
-                            .font(AppFont.mono(12))
-                            .foregroundStyle(colors.textSecondary)
-                    } else {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Downloading…")
-                            .font(AppFont.mono(12))
-                            .foregroundStyle(colors.textSecondary)
-                    }
+            // Only offered before anything's actually happened — once a
+            // download/install is underway there's no safe mid-flight
+            // cancel, so the card stays put until it finishes either way.
+            if checker.downloadState == .idle || isFailed {
+                Button {
+                    checker.remindLater()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(colors.textTertiary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-            case .opened(let filename):
-                Text("Downloaded \(filename) and opened it — quit Eaon and drag the new version into Applications to finish.")
-                    .font(AppFont.sans(12))
+                .buttonStyle(.plain)
+                .help("Not now — you can update later from Settings → General")
+            }
+        }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = checker.downloadState { return true }
+        return false
+    }
+
+    private var iconName: String {
+        switch checker.downloadState {
+        case .relaunching: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        default: return "arrow.down.circle.fill"
+        }
+    }
+
+    private var statusHeadline: String {
+        switch checker.downloadState {
+        case .idle: return "Update Available"
+        case .downloading: return "Downloading Update"
+        case .installing: return "Installing"
+        case .relaunching: return "Restarting Eaon"
+        case .failed: return "Update Failed"
+        }
+    }
+
+    // MARK: - Release notes
+
+    private func releaseNotes(_ notes: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("WHAT'S NEW")
+                .font(AppFont.mono(10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(colors.textTertiary)
+
+            ScrollView {
+                Text(notes)
+                    .font(AppFont.sans(12.5))
                     .foregroundStyle(colors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .failed(let message):
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 120)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(colors.backgroundSubtle)
+        )
+    }
+
+    // MARK: - Status / actions
+
+    @ViewBuilder
+    private var statusArea: some View {
+        switch checker.downloadState {
+        case .downloading(let fraction):
+            progressRow(fraction: fraction, label: fraction.map { "\(Int($0 * 100))%" } ?? "Downloading…")
+        case .installing:
+            progressRow(fraction: nil, label: "Installing…")
+        case .relaunching:
+            progressRow(fraction: 1, label: "Restarting…")
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 12) {
                 Text(message)
                     .font(AppFont.sans(12))
                     .foregroundStyle(colors.destructive)
                     .fixedSize(horizontal: false, vertical: true)
                 actionRow
-            case .idle:
-                actionRow
             }
+        case .idle:
+            actionRow
         }
-        .padding(18)
-        .frame(width: 400)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(colors.backgroundElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(colors.borderSubtle, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+    }
+
+    private func progressRow(fraction: Double?, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(colors.backgroundSubtle)
+                    Capsule()
+                        .fill(accent)
+                        .frame(width: geometry.size.width * (fraction ?? 0.35))
+                        .animation(.uiEaseInOut(duration: 0.3), value: fraction)
+                }
+            }
+            .frame(height: 5)
+
+            Text(label)
+                .font(AppFont.mono(12, weight: .medium))
+                .foregroundStyle(colors.textSecondary)
+        }
     }
 
     private var actionRow: some View {
         HStack(spacing: 18) {
-            if let notes = manifest.releaseNotes, !notes.isEmpty {
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { showingNotes.toggle() }
-                } label: {
-                    Text(showingNotes ? "Hide Release Notes" : "Show Release Notes")
-                        .font(AppFont.mono(13, weight: .medium))
-                        .foregroundStyle(colors.textPrimary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Button {
-                checker.remindLater()
-            } label: {
-                Text("Remind Me Later")
-                    .font(AppFont.mono(13, weight: .medium))
-                    .foregroundStyle(colors.textPrimary)
-            }
-            .buttonStyle(.plain)
-
             Spacer(minLength: 0)
 
             Button {
@@ -112,10 +181,10 @@ struct UpdateBanner: View {
             } label: {
                 Text("Update Now")
                     .font(AppFont.mono(13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(AppearanceSettings.shared.accentColor))
+                    .foregroundStyle(AppearanceSettings.shared.onAccentColor)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(accent))
             }
             .buttonStyle(PressableButtonStyle())
         }

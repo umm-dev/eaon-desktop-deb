@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// The app's own version identity. The dev build is a bare executable with
 /// no Info.plist, so `Bundle.main`'s CFBundleShortVersionString is always
@@ -7,7 +8,7 @@ import Foundation
 /// the LAST step of cutting a release, so a freshly-updated app never
 /// thinks the manifest's version is still newer than itself.
 enum AppVersion {
-    static let current = "0.8.2"
+    static let current = "2026.1.8"
 }
 
 /// What the update server hosts — one small JSON file describing the newest
@@ -21,34 +22,32 @@ struct UpdateManifest: Decodable, Equatable {
 }
 
 /// Checks for updates on launch, drives the "New Version" card, and runs
-/// the download when the user asks for it.
+/// the download + self-install when the user asks for it.
 ///
 /// Design constraints this deliberately respects:
 /// - A failed or unreachable check is a silent no-op — an update prompt is
 ///   the only acceptable outcome of a background check, never an error.
-/// - "Update Now" downloads the release and opens it. It does NOT try to
-///   silently replace the running binary: that only becomes safe once the
-///   app ships as a signed .app bundle (at which point Sparkle, the
-///   standard framework for this, is the right tool — it adds the signed
-///   appcast + atomic-swap + relaunch machinery this hand-rolled version
-///   deliberately doesn't attempt). Until then, trusting an unsigned
-///   download enough to self-replace would be a security hole, not a
-///   feature.
+/// - "Update Now" downloads a .zip of the new .app and hands it to
+///   `SelfUpdateInstaller`, which verifies it's a real, complete Eaon
+///   bundle before touching anything on disk, then swaps it in with an
+///   automatic rollback if the swap itself fails. See that type for the
+///   actual safety mechanics — the goal is that a bad download or an
+///   interrupted install can never leave the app broken or missing.
 @MainActor
 @Observable
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
-    /// Where the manifest lives. Point this at wherever the release JSON is
-    /// actually hosted (any static host works — GitHub raw/releases, the
-    /// aquadevs.com site itself, an S3 bucket…). Until this URL is real,
-    /// checks fail silently and the app simply never prompts.
-    static let manifestURL = URL(string: "https://aquadevs.com/aquachat/update-manifest.json")!
+    /// Where the manifest lives — hosted alongside the .dmg downloads on
+    /// downloads.eaon.dev. Until this URL is real, checks fail silently and
+    /// the app simply never prompts.
+    static let manifestURL = URL(string: "https://downloads.eaon.dev/update-manifest.json")!
 
     enum DownloadState: Equatable {
         case idle
         case downloading(fraction: Double?)
-        case opened(filename: String)
+        case installing
+        case relaunching
         case failed(String)
     }
 
@@ -60,20 +59,65 @@ final class UpdateChecker {
     private(set) var lastManualCheckResult: String?
     var isCheckingManually = false
 
+    /// Whether Eaon checks for updates on its own — at launch and
+    /// periodically after that — versus only when the user presses "Check
+    /// for Updates" by hand. Defaults to true (matching the only behavior
+    /// this app had before this setting existed), same pattern as
+    /// `MemoryStore.isAutoLearnEnabled`.
+    var isAutoCheckEnabled: Bool {
+        didSet {
+            guard isAutoCheckEnabled != oldValue else { return }
+            UserDefaults.standard.set(isAutoCheckEnabled, forKey: Self.autoCheckEnabledKey)
+            startPeriodicChecksIfNeeded()
+        }
+    }
+
     private let snoozedVersionKey = "update_snoozed_version"
     private let snoozeUntilKey = "update_snooze_until"
+    private static let autoCheckEnabledKey = "eaon_update_autocheck_enabled"
+    private static let periodicCheckInterval: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
-    private init() {}
+    private var periodicCheckTask: Task<Void, Never>?
+
+    private init() {
+        isAutoCheckEnabled = UserDefaults.standard.object(forKey: Self.autoCheckEnabledKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: Self.autoCheckEnabledKey)
+    }
 
     // MARK: - Checking
 
     /// Background check (launch): silent unless a genuinely newer,
-    /// non-snoozed version exists.
+    /// non-snoozed version exists. Also starts the recurring check that
+    /// keeps running for as long as the app stays open, so "periodically"
+    /// is real and not just launch-time copy.
     func checkOnLaunch() async {
+        startPeriodicChecksIfNeeded()
+        guard isAutoCheckEnabled else { return }
+        await silentCheck()
+    }
+
+    /// Runs every `periodicCheckInterval` while the app is open and the
+    /// setting is on; cancelled and restarted whenever the toggle flips so
+    /// turning it off takes effect immediately rather than after the next
+    /// scheduled tick.
+    private func startPeriodicChecksIfNeeded() {
+        periodicCheckTask?.cancel()
+        guard isAutoCheckEnabled else { return }
+        periodicCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.periodicCheckInterval)
+                guard !Task.isCancelled, let self else { return }
+                await self.silentCheck()
+            }
+        }
+    }
+
+    private func silentCheck() async {
         guard let manifest = await fetchManifest() else { return }
         guard Self.isVersion(manifest.latestVersion, newerThan: AppVersion.current) else { return }
         guard !isSnoozed(manifest.latestVersion) else { return }
-        available = manifest
+        withAnimation(.uiEaseOut(duration: 0.45)) { available = manifest }
     }
 
     /// User-initiated check (Settings): always reports an outcome, and an
@@ -88,7 +132,7 @@ final class UpdateChecker {
             return
         }
         if Self.isVersion(manifest.latestVersion, newerThan: AppVersion.current) {
-            available = manifest
+            withAnimation(.uiEaseOut(duration: 0.45)) { available = manifest }
             lastManualCheckResult = "Version \(manifest.latestVersion) is available."
         } else {
             lastManualCheckResult = "You're up to date — \(AppVersion.current) is the latest version."
@@ -116,7 +160,7 @@ final class UpdateChecker {
         guard let available else { return }
         UserDefaults.standard.set(available.latestVersion, forKey: snoozedVersionKey)
         UserDefaults.standard.set(Date().addingTimeInterval(24 * 60 * 60), forKey: snoozeUntilKey)
-        self.available = nil
+        withAnimation(.uiEaseOut(duration: 0.35)) { self.available = nil }
         downloadState = .idle
     }
 
@@ -126,23 +170,39 @@ final class UpdateChecker {
         return Date() < until
     }
 
-    /// Downloads the release into ~/Downloads (with live progress when the
-    /// server reports a length) and opens it when done — for a .dmg that
-    /// mounts the installer, leaving one drag for the user.
+    /// Downloads the release .zip (with live progress when the server
+    /// reports a length), verifies and installs it in place, then relaunches
+    /// — no manual quit-and-drag required. Falls back to a clear error
+    /// message, with the current app left untouched, if anything along the
+    /// way can't be trusted.
     func updateNow() {
-        guard let manifest = available, downloadState != .downloading(fraction: nil) else { return }
-        if case .downloading = downloadState { return }
+        guard let manifest = available else { return }
+        switch downloadState {
+        case .downloading, .installing, .relaunching: return
+        case .idle, .failed: break
+        }
 
         Task {
-            downloadState = .downloading(fraction: nil)
             do {
-                let fileURL = try await download(manifest: manifest)
-                downloadState = .opened(filename: fileURL.lastPathComponent)
-                NSWorkspace.shared.open(fileURL)
+                downloadState = .downloading(fraction: nil)
+                let zipURL = try await download(manifest: manifest)
+                downloadState = .installing
+                try await SelfUpdateInstaller.install(zipAt: zipURL)
+                downloadState = .relaunching
+                // Let the UI show "Restarting…" for a beat before the app vanishes.
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                SelfUpdateInstaller.relaunchAndQuit()
             } catch {
-                downloadState = .failed("Download failed — \(error.localizedDescription)")
+                downloadState = .failed(Self.userMessage(for: error))
             }
         }
+    }
+
+    private static func userMessage(for error: Error) -> String {
+        if let installError = error as? SelfUpdateInstaller.InstallError {
+            return installError.errorDescription ?? "Update failed."
+        }
+        return "Download failed — \(error.localizedDescription)"
     }
 
     private func download(manifest: UpdateManifest) async throws -> URL {
@@ -151,12 +211,8 @@ final class UpdateChecker {
             throw URLError(.badServerResponse)
         }
 
-        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        let suggested = response.suggestedFilename ?? "Eaon-\(manifest.latestVersion).dmg"
-        let destination = downloads.appendingPathComponent(suggested)
-        // A leftover file from an earlier attempt shouldn't fail the retry.
-        try? FileManager.default.removeItem(at: destination)
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EaonDownload-\(UUID().uuidString).zip")
         FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
@@ -179,6 +235,14 @@ final class UpdateChecker {
         }
         if !buffer.isEmpty {
             try handle.write(contentsOf: buffer)
+            written += Int64(buffer.count)
+        }
+
+        // A truncated download must never reach the installer — ditto would
+        // either fail loudly or, worse, partially succeed on garbage.
+        if expected > 0, written != expected {
+            try? FileManager.default.removeItem(at: destination)
+            throw URLError(.zeroByteResource)
         }
         return destination
     }

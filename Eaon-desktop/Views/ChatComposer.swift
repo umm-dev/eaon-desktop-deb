@@ -45,8 +45,8 @@ struct ChatComposer: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !KeychainService.hasAPIKey {
-                noticeBanner(icon: "key.fill", tint: .orange, text: "Add your API key in Settings → Aqua API to chat.")
+            if viewModel.chatModels.isEmpty {
+                noticeBanner(icon: "key.fill", tint: .orange, text: "Set up a model provider in Settings to start chatting — Aqua, your own API key, or a local model.")
             }
             if let notice = viewModel.composerNotice {
                 noticeBanner(icon: "info.circle", tint: .orange, text: notice)
@@ -139,7 +139,7 @@ struct ChatComposer: View {
                 onPasteImage: { isAttachMenuOpen = false; viewModel.pasteImageAttachment() },
                 onComingSoon: { feature in
                     isAttachMenuOpen = false
-                    viewModel.composerNotice = "\(feature) is coming to Aqua soon."
+                    viewModel.composerNotice = "\(feature) is coming to Eaon soon."
                 }
             )
         }

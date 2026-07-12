@@ -14,6 +14,10 @@ struct CodeBlockView: View {
         return language
     }
 
+    private var detectedLanguage: SyntaxLanguage {
+        SyntaxLanguage.detect(tag: language)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -60,18 +64,18 @@ struct CodeBlockView: View {
 
     @ViewBuilder
     private var codeText: some View {
+        let highlighted = SyntaxHighlighter.highlight(code, language: detectedLanguage, colors: colors)
         if showTypingCursor {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let cursorVisible = Int(context.date.timeIntervalSince1970 * 2) % 2 == 0
-                (Text(code).foregroundColor(colors.textCode)
+                (Text(highlighted)
                     + Text("▎").foregroundColor(colors.textPrimary.opacity(cursorVisible ? 0.95 : 0.2)))
                     .font(AppFont.mono(13))
                     .textSelection(.enabled)
             }
         } else {
-            Text(code)
+            Text(highlighted)
                 .font(AppFont.mono(13))
-                .foregroundStyle(colors.textCode)
                 .textSelection(.enabled)
         }
     }

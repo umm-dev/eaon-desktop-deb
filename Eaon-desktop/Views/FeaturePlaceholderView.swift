@@ -40,7 +40,7 @@ struct FeaturePlaceholderView: View {
                     .foregroundStyle(colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)
-                Text("Coming soon to Aqua")
+                Text("Coming soon to Eaon")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(colors.textSecondary)
                     .padding(.horizontal, 12)

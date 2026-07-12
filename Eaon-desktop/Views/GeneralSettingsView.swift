@@ -25,6 +25,7 @@ struct GeneralSettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     aboutCard
                     updatesCard
+                    dataFolderCard
                     supportCard
                 }
                 .padding(.horizontal, 32)
@@ -53,10 +54,10 @@ struct GeneralSettingsView: View {
                 Spacer(minLength: 0)
 
                 Button {
-                    NSWorkspace.shared.open(URL(string: "https://aquadevs.com")!)
+                    NSWorkspace.shared.open(URL(string: "https://eaon.dev")!)
                 } label: {
                     HStack(spacing: 5) {
-                        Text("aquadevs.com")
+                        Text("eaon.dev")
                         Image(systemName: "arrow.up.right")
                     }
                     .font(AppFont.mono(12, weight: .medium))
@@ -70,41 +71,123 @@ struct GeneralSettingsView: View {
 
     private var updatesCard: some View {
         SettingsCard {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Updates")
-                        .font(AppFont.mono(14, weight: .semibold))
-                        .foregroundColor(colors.textPrimary)
-                    if let result = updateChecker.lastManualCheckResult {
-                        Text(result)
-                            .font(AppFont.mono(12))
-                            .foregroundColor(colors.textSecondary)
-                    } else {
-                        Text("Eaon checks for new versions automatically when it starts.")
-                            .font(AppFont.mono(12))
-                            .foregroundColor(colors.textSecondary)
-                    }
-                }
-                Spacer()
-                Button {
-                    Task { await updateChecker.checkManually() }
-                } label: {
-                    HStack(spacing: 6) {
-                        if updateChecker.isCheckingManually {
-                            ProgressView().controlSize(.small)
-                        }
-                        Text("Check for Updates")
-                            .font(AppFont.mono(12, weight: .semibold))
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Automatic Update Check")
+                            .font(AppFont.mono(13, weight: .semibold))
                             .foregroundColor(colors.textPrimary)
+                        Text("Checks for a newer version on startup, and periodically while Eaon stays open.")
+                            .font(AppFont.sans(11))
+                            .foregroundColor(colors.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(Capsule().stroke(colors.borderMedium, lineWidth: 1))
+                    Spacer(minLength: 0)
+                    Toggle("", isOn: $updateChecker.isAutoCheckEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(AppearanceSettings.shared.accentColor)
                 }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(updateChecker.isCheckingManually)
+                .padding(16)
+
+                Divider().overlay(colors.borderSubtle)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Check for Updates")
+                            .font(AppFont.mono(14, weight: .semibold))
+                            .foregroundColor(colors.textPrimary)
+                        if let result = updateChecker.lastManualCheckResult {
+                            Text(result)
+                                .font(AppFont.mono(12))
+                                .foregroundColor(colors.textSecondary)
+                        } else {
+                            Text("Check if a newer version of Eaon is available right now.")
+                                .font(AppFont.mono(12))
+                                .foregroundColor(colors.textSecondary)
+                        }
+                    }
+                    Spacer()
+                    Button {
+                        Task { await updateChecker.checkManually() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if updateChecker.isCheckingManually {
+                                ProgressView().controlSize(.small)
+                            }
+                            Text("Check for Updates")
+                                .font(AppFont.mono(12, weight: .semibold))
+                                .foregroundColor(colors.textPrimary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().stroke(colors.borderMedium, lineWidth: 1))
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                    .disabled(updateChecker.isCheckingManually)
+                }
+                .padding(18)
             }
-            .padding(18)
+        }
+    }
+
+    /// "Downloaded local models and file attachments" — deliberately not
+    /// "messages": conversations actually live in UserDefaults (see
+    /// `LegacyDefaultsMigrator`), not this folder, so claiming otherwise
+    /// here would just be wrong.
+    private var dataFolderCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("App Data")
+                            .font(AppFont.mono(14, weight: .semibold))
+                            .foregroundColor(colors.textPrimary)
+                        Text("Downloaded local models and file attachments.")
+                            .font(AppFont.mono(12))
+                            .foregroundColor(colors.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([AppDataLocation.directory])
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "folder")
+                            Text("Show in Finder")
+                        }
+                        .font(AppFont.mono(12, weight: .semibold))
+                        .foregroundColor(colors.textPrimary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().stroke(colors.borderMedium, lineWidth: 1))
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                }
+                .padding(18)
+
+                Divider().overlay(colors.borderSubtle)
+
+                HStack(spacing: 8) {
+                    Text(AppDataLocation.directory.path)
+                        .font(AppFont.mono(11))
+                        .foregroundColor(colors.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(AppDataLocation.directory.path, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundColor(colors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy path")
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+            }
         }
     }
 
@@ -115,13 +198,13 @@ struct GeneralSettingsView: View {
                     Text("Need help?")
                         .font(AppFont.mono(14, weight: .semibold))
                         .foregroundColor(colors.textPrimary)
-                    Text("support@aquadevs.com")
+                    Text("support@eaon.dev")
                         .font(AppFont.mono(12))
                         .foregroundColor(colors.textSecondary)
                 }
                 Spacer()
                 Button {
-                    NSWorkspace.shared.open(URL(string: "mailto:support@aquadevs.com")!)
+                    NSWorkspace.shared.open(URL(string: "mailto:support@eaon.dev")!)
                 } label: {
                     Text("Email us")
                         .font(AppFont.mono(12, weight: .semibold))

@@ -437,17 +437,21 @@ struct CodeWorkspacePanel: View {
         .background(colors.backgroundCode)
     }
 
+    private func detectedLanguage(for file: WorkspaceFile) -> SyntaxLanguage {
+        SyntaxLanguage.detect(fileExtension: (file.path as NSString).pathExtension)
+    }
+
     @ViewBuilder
     private func editorText(for file: WorkspaceFile) -> some View {
+        let highlighted = SyntaxHighlighter.highlight(file.content, language: detectedLanguage(for: file), colors: colors)
         if !file.isComplete, viewModel.isGenerating {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let cursorVisible = Int(context.date.timeIntervalSince1970 * 2) % 2 == 0
-                (Text(file.content).foregroundColor(colors.textCode)
+                (Text(highlighted)
                     + Text("▎").foregroundColor(colors.textPrimary.opacity(cursorVisible ? 0.95 : 0.2)))
             }
         } else {
-            Text(file.content)
-                .foregroundStyle(colors.textCode)
+            Text(highlighted)
         }
     }
 

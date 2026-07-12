@@ -5,10 +5,28 @@ struct BrandLogoView: View {
     var size: CGFloat = 20
     /// Aqua Chat is dark-first; always use dark-mode logo assets.
     var logoColorScheme: ColorScheme = .dark
+    /// A user-picked image for a custom (BYOK) provider connection — takes
+    /// over rendering entirely when set, since `brand` there is really just
+    /// "closest wire-format match," not necessarily the real company.
+    var customImage: NSImage? = nil
 
     var body: some View {
         Group {
-            if let asset = brand.logoAssetName(for: logoColorScheme),
+            if let customImage {
+                Image(nsImage: customImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else if brand == .aqua {
+                // Aqua's real mark already exists natively in this codebase
+                // (it's the app's own brand geometry) — render it directly
+                // rather than round-tripping through a rasterized/vector
+                // asset file that would just be a copy of this same shape.
+                AquaMark(size: size)
+            } else if let asset = brand.logoAssetName(for: logoColorScheme),
                let nsImage = BrandLogoLoader.image(named: asset) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -34,6 +52,10 @@ struct BrandLogoView: View {
 struct ProviderBadge: View {
     let brand: ProviderBrand
     var size: CGFloat = 30
+    /// See `BrandLogoView.customImage` — when set, fills the whole badge
+    /// (a real logo image carries its own visual weight) rather than
+    /// sitting small and centered the way a catalog icon mark does.
+    var customImage: NSImage? = nil
     @Environment(\.themeColors) private var colors
 
     var body: some View {
@@ -42,7 +64,7 @@ struct ProviderBadge: View {
             .overlay(Circle().stroke(colors.borderSubtle, lineWidth: 1))
             .frame(width: size, height: size)
             .overlay {
-                BrandLogoView(brand: brand, size: size * 0.6)
+                BrandLogoView(brand: brand, size: customImage == nil ? size * 0.6 : size, customImage: customImage)
             }
     }
 }

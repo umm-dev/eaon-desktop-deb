@@ -60,7 +60,7 @@ enum WorkspaceParser {
     ```
 
     2. Edit part of an existing file (preferred for small changes — don't rewrite big files):
-    ```aqua:edit file="src/app.js"
+    ```eaon:edit file="src/app.js"
     <<<<<<< SEARCH
     exact existing lines to find
     =======
@@ -70,27 +70,27 @@ enum WorkspaceParser {
     The SEARCH text must match the file exactly and appear exactly once.
 
     3. Run a script file (websites just preview — never "run" an .html file):
-    ```aqua:run file="main.py"
+    ```eaon:run file="main.py"
     ```
 
     4. Read a file back:
-    ```aqua:read file="main.py"
+    ```eaon:read file="main.py"
     ```
 
     5. List all files:
-    ```aqua:ls
+    ```eaon:ls
     ```
 
-    After your reply, any aqua:run / aqua:edit / aqua:read / aqua:ls tools execute automatically and their results come back to you in a message beginning "[Tool results". You then continue — this loops until you reply with no tools.
+    After your reply, any eaon:run / eaon:edit / eaon:read / eaon:ls tools execute automatically and their results come back to you in a message beginning "[Tool results". You then continue — this loops until you reply with no tools.
 
     WORKFLOW for coding requests
     1. One short paragraph saying what you'll build. No long plans.
     2. Write ALL the files, complete from first line to last — never "rest unchanged", never placeholder comments.
-    3. Scripts: run the entry file with aqua:run, read the result, and if it failed, fix the file (aqua:edit or a full rewrite) and run again — iterate until it exits cleanly. Websites: skip running; they preview automatically.
+    3. Scripts: run the entry file with eaon:run, read the result, and if it failed, fix the file (eaon:edit or a full rewrite) and run again — iterate until it exits cleanly. Websites: skip running; they preview automatically.
     4. Finish with a 1–3 sentence summary.
 
-    Use forward slashes for folders (file="css/style.css"). To change a file you already made, prefer aqua:edit; re-emitting the full file with the same path also works.
-    For anything that is NOT a coding request — conversation, questions, short snippets meant to be read inline — reply normally, with NO file attributes and NO aqua: blocks.
+    Use forward slashes for folders (file="css/style.css"). To change a file you already made, prefer eaon:edit; re-emitting the full file with the same path also works.
+    For anything that is NOT a coding request — conversation, questions, short snippets meant to be read inline — reply normally, with NO file attributes and NO eaon: blocks.
     """
 
     /// Cheap pre-check so the full line scan doesn't run on every stream tick
@@ -98,10 +98,11 @@ enum WorkspaceParser {
     static func mightContainFiles(_ text: String) -> Bool {
         guard text.contains("```") else { return false }
         return text.contains("file=") || text.contains("path=")
-            || text.contains("filename=") || text.contains("aqua:")
+            || text.contains("filename=") || text.contains("eaon:")
+            || text.contains("aqua:")  // legacy prefix, still parsed
     }
 
-    /// The exact search/replace of an `aqua:edit` block, Aider-style.
+    /// The exact search/replace of an `eaon:edit` block, Aider-style.
     struct EditPayload: Equatable {
         let search: String
         let replace: String
@@ -118,18 +119,41 @@ enum WorkspaceParser {
         case run(path: String?)
         case read(path: String?)
         case list
+        /// `server`/`tool` are nil when the fence is missing that
+        /// attribute — reported back as an error the same way a malformed
+        /// edit block is, rather than silently dropped. `server` names
+        /// which connected service owns `tool`, since more than one can
+        /// be connected at once.
+        case mcpCall(server: String?, tool: String?, argumentsJSON: String)
+        /// A live web search — see `WebSearchTool`. Not an `mcpCall`
+        /// because it isn't a connected third-party account: no server id,
+        /// no confirmation dialog, no "connected services" membership
+        /// check.
+        case webSearch(argumentsJSON: String)
+        /// A desktop-control action — see `DesktopControl`. `tool` is the
+        /// bare tool name (e.g. "move_item"), nil when the fence omitted the
+        /// `tool="…"` attribute (reported back as an error, not dropped).
+        case computerCall(tool: String?, argumentsJSON: String)
     }
 
     /// Single line-scan state machine over one message's text. A file block
     /// missing its closing fence (mid-stream) yields `isComplete == false`;
-    /// incomplete run/read/ls blocks are dropped entirely so a half-streamed
-    /// tool is never acted on.
-    static func events(from text: String) -> [Event] {
+    /// incomplete run/read/ls/mcp blocks are dropped entirely so a
+    /// half-streamed tool is never acted on.
+    ///
+    /// `assumeFinal` flips that trailing-block rule for text that has
+    /// FINISHED streaming: there, an unterminated block isn't "still being
+    /// written," it's a model that stopped without emitting the closing
+    /// fence — a common way for models to end a turn on a tool call. The
+    /// agent loop passes true so those calls execute instead of being
+    /// silently dropped (which ended the whole loop with no reply and no
+    /// error — the "model goes quiet after a tool call" bug).
+    static func events(from text: String, assumeFinal: Bool = false) -> [Event] {
         enum Mode {
             case outside
             case plainFence
             case file(path: String, language: String?)
-            case tool(kind: String, path: String?)
+            case tool(kind: String, path: String?, toolName: String?, serverName: String?)
         }
 
         var events: [Event] = []
@@ -145,7 +169,7 @@ enum WorkspaceParser {
                     content: bodyLines.joined(separator: "\n"),
                     isComplete: complete
                 )))
-            case .tool(let kind, let path):
+            case .tool(let kind, let path, let toolName, let serverName):
                 switch kind {
                 case "edit":
                     if let path {
@@ -167,8 +191,29 @@ enum WorkspaceParser {
                             isComplete: complete
                         )))
                     }
+                case "mcp":
+                    if complete {
+                        events.append(.mcpCall(server: serverName, tool: toolName, argumentsJSON: bodyLines.joined(separator: "\n")))
+                    }
+                case "search":
+                    if complete {
+                        events.append(.webSearch(argumentsJSON: bodyLines.joined(separator: "\n")))
+                    }
+                case "computer":
+                    if complete {
+                        events.append(.computerCall(tool: toolName, argumentsJSON: bodyLines.joined(separator: "\n")))
+                    }
                 default:
-                    break
+                    // A natural model mistake: naming the service as the
+                    // kind itself (```eaon:github tool="x") instead of
+                    // ```eaon:mcp server="github". The intent is
+                    // unambiguous when a tool attribute is present, so
+                    // accept it — a wrong guess still dies with a clear
+                    // "unknown service" error fed back to the model,
+                    // instead of the whole call being silently dropped.
+                    if complete, let toolName {
+                        events.append(.mcpCall(server: serverName ?? kind, tool: toolName, argumentsJSON: bodyLines.joined(separator: "\n")))
+                    }
                 }
             case .outside, .plainFence:
                 break
@@ -193,8 +238,12 @@ enum WorkspaceParser {
             case .outside:
                 guard trimmed.hasPrefix("```") else { continue }
                 let info = fenceInfo(from: String(trimmed.dropFirst(3)))
-                if let language = info.language, language.hasPrefix("aqua:") {
-                    mode = .tool(kind: String(language.dropFirst(5)), path: info.path)
+                // "aqua:" is the legacy spelling of the same convention
+                // (pre-rename) — still accepted because models mimic what
+                // they see, and older conversations' history is full of
+                // aqua:-prefixed blocks. Both prefixes are 5 characters.
+                if let language = info.language, language.hasPrefix("eaon:") || language.hasPrefix("aqua:") {
+                    mode = .tool(kind: String(language.dropFirst(5)), path: info.path, toolName: info.tool, serverName: info.server)
                     bodyLines = []
                 } else if let path = info.path {
                     mode = .file(path: path, language: info.language)
@@ -206,8 +255,10 @@ enum WorkspaceParser {
                 }
             }
         }
-        // Text ended mid-block: the stream is still writing it.
-        closeBlock(complete: false)
+        // Text ended mid-block: still streaming (incomplete), unless the
+        // caller says this text is final — then the model just never
+        // emitted the closing fence, and the block counts as complete.
+        closeBlock(complete: assumeFinal)
         return events
     }
 
@@ -251,7 +302,7 @@ enum WorkspaceParser {
                 file.content = newContent
                 file.isComplete = true
                 byPath[path] = file
-            case .run, .read, .list:
+            case .run, .read, .list, .mcpCall, .webSearch, .computerCall:
                 break
             }
         }
@@ -281,7 +332,7 @@ enum WorkspaceParser {
         return .applied(content.replacingOccurrences(of: payload.search, with: payload.replace))
     }
 
-    /// Extracts the SEARCH/REPLACE sections from an aqua:edit body. Returns
+    /// Extracts the SEARCH/REPLACE sections from an eaon:edit body. Returns
     /// nil when the conflict markers are missing or out of order.
     static func parseEditPayload(_ lines: [String]) -> EditPayload? {
         func isMarker(_ line: String, _ marker: String) -> Bool {
@@ -301,12 +352,27 @@ enum WorkspaceParser {
         options: [.caseInsensitive]
     )
 
+    /// `eaon:mcp` blocks name a tool instead of a file, e.g.
+    /// `eaon:mcp server="github" tool="create_issue"` — separate
+    /// attributes since neither a tool name nor a server id is ever a
+    /// path (no sanitization/slash-splitting applies to either).
+    private static let toolAttributeRegex = try! NSRegularExpression(
+        pattern: "tool\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)'|([^\\s\"']+))",
+        options: [.caseInsensitive]
+    )
+
+    private static let serverAttributeRegex = try! NSRegularExpression(
+        pattern: "server\\s*=\\s*(?:\"([^\"]+)\"|'([^']+)'|([^\\s\"']+))",
+        options: [.caseInsensitive]
+    )
+
     /// Splits a fence info string like `html file="css/style.css"` into its
-    /// language and file path. `path` is nil for a plain code block. Also
+    /// language, file path, and (for `eaon:mcp`) tool/server names.
+    /// `path`/`tool`/`server` are nil when their attribute is absent. Also
     /// accepts path=/filename= and unquoted values, since models vary.
-    static func fenceInfo(from info: String?) -> (language: String?, path: String?) {
+    static func fenceInfo(from info: String?) -> (language: String?, path: String?, tool: String?, server: String?) {
         guard let info = info?.trimmingCharacters(in: .whitespaces), !info.isEmpty else {
-            return (nil, nil)
+            return (nil, nil, nil, nil)
         }
 
         var path: String?
@@ -320,13 +386,33 @@ enum WorkspaceParser {
             }
         }
 
+        var tool: String?
+        if let match = toolAttributeRegex.firstMatch(in: info, range: range) {
+            for group in 1...3 {
+                if let valueRange = Range(match.range(at: group), in: info) {
+                    tool = String(info[valueRange]).trimmingCharacters(in: .whitespaces)
+                    break
+                }
+            }
+        }
+
+        var server: String?
+        if let match = serverAttributeRegex.firstMatch(in: info, range: range) {
+            for group in 1...3 {
+                if let valueRange = Range(match.range(at: group), in: info) {
+                    server = String(info[valueRange]).trimmingCharacters(in: .whitespaces)
+                    break
+                }
+            }
+        }
+
         let language = info
             .split(whereSeparator: { $0 == " " || $0 == "\t" })
             .map(String.init)
             .first { !$0.contains("=") }?
             .lowercased()
 
-        return (language, path)
+        return (language, path, tool, server)
     }
 
     /// Normalizes a model-supplied path so it's always a safe, relative,

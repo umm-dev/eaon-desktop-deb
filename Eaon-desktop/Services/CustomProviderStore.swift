@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Which request/response shape a custom provider's endpoint speaks. Aqua
@@ -41,11 +42,36 @@ struct CustomProviderConfig: Identifiable, Codable, Equatable {
     var format: APIRequestFormat
     var modelIDs: [String]
     var createdAt = Date()
+    /// User-chosen label for this connection — e.g. "Eaon" for a gateway
+    /// that happens to speak OpenAI's wire format. Optional and nil by
+    /// default (old saved configs decode fine without it); `displayName`
+    /// is what every user-facing surface should show, never `brand`
+    /// directly, so a renamed connection shows its real name everywhere
+    /// at once — the model picker, its sidebar row, error messages.
+    var customName: String?
+
+    /// File name of a user-picked logo image stored via `ProviderLogoStore`
+    /// — nil (the default, decodes fine on old saved configs) falls back to
+    /// `brand`'s catalog logo. An escape hatch for the common case where
+    /// `brand` is really "closest wire-format match," not the actual
+    /// company this connection points at.
+    var customLogoFileName: String?
 
     var trimmedModelIDs: [String] {
         modelIDs
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    /// What to actually call this connection anywhere it's shown to the
+    /// user — the custom name if one is set, the underlying brand's name
+    /// otherwise. `brand.companyName` itself stays reserved for text
+    /// that's specifically about the real service (e.g. "get your key
+    /// from OpenAI's dashboard"), which stays true regardless of what the
+    /// user named the connection.
+    var displayName: String {
+        let trimmed = customName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? brand.companyName : trimmed
     }
 }
 
@@ -73,6 +99,11 @@ enum KnownProviderDefaults {
         // and confirmed live (2026-07-07).
         case .groq: return "https://api.groq.com/openai/v1"
         case .openRouter: return "https://openrouter.ai/api/v1"
+        // Same category as groq/openRouter — OpenAI-compatible, confirmed
+        // against each provider's own docs (2026-07-12).
+        case .together: return "https://api.together.ai/v1"
+        case .fireworks: return "https://api.fireworks.ai/inference/v1"
+        case .cerebras: return "https://api.cerebras.ai/v1"
         default: return nil
         }
     }
@@ -107,6 +138,10 @@ enum KnownProviderDefaults {
         // Both confirmed live against the real, public API (2026-07-07).
         case .groq: return "llama-3.3-70b-versatile"
         case .openRouter: return "anthropic/claude-sonnet-5"
+        // All three confirmed against each provider's own docs (2026-07-12).
+        case .together: return "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+        case .fireworks: return "accounts/fireworks/models/llama-v3p1-8b-instruct"
+        case .cerebras: return "llama3.1-8b"
         default: return nil
         }
     }
@@ -135,7 +170,7 @@ final class CustomProviderStore {
     }
 
     func apiKey(for configId: UUID) -> String? {
-        KeychainService.loadAPIKey(forAccount: keychainAccount(for: configId))
+        APIKeyStore.loadAPIKey(forAccount: keychainAccount(for: configId))
     }
 
     func save(_ config: CustomProviderConfig, apiKey: String) throws {
@@ -146,15 +181,31 @@ final class CustomProviderStore {
         }
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedKey.isEmpty {
-            try KeychainService.saveAPIKey(trimmedKey, forAccount: keychainAccount(for: config.id))
+            try APIKeyStore.saveAPIKey(trimmedKey, forAccount: keychainAccount(for: config.id))
         }
         persist()
     }
 
     func remove(_ id: UUID) {
+        if let fileName = configs.first(where: { $0.id == id })?.customLogoFileName {
+            ProviderLogoStore.deleteLogo(fileName: fileName)
+        }
         configs.removeAll { $0.id == id }
-        KeychainService.deleteAPIKey(forAccount: keychainAccount(for: id))
+        APIKeyStore.deleteAPIKey(forAccount: keychainAccount(for: id))
         persist()
+    }
+
+    /// `fileName` nil resets to the brand's default catalog logo, deleting
+    /// whatever custom image was on disk for this connection.
+    func setCustomLogo(fileName: String?, for configId: UUID) {
+        guard let index = configs.firstIndex(where: { $0.id == configId }) else { return }
+        configs[index].customLogoFileName = fileName
+        persist()
+    }
+
+    func logoImage(for config: CustomProviderConfig) -> NSImage? {
+        guard let fileName = config.customLogoFileName else { return nil }
+        return ProviderLogoStore.image(fileName: fileName)
     }
 
     /// Synthetic catalog entries for every configured custom model, shaped

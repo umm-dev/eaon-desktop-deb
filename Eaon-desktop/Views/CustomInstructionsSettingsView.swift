@@ -91,7 +91,7 @@ struct CustomInstructionsSettingsView: View {
                     } label: {
                         Text("Save")
                             .font(AppFont.mono(12, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(hasUnsavedChanges ? AppearanceSettings.shared.onAccentColor : colors.textSecondary)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 7)
                             .background(Capsule().fill(hasUnsavedChanges ? AppearanceSettings.shared.accentColor : colors.borderMedium))

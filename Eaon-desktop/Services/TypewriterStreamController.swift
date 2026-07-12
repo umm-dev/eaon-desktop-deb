@@ -11,8 +11,15 @@ final class TypewriterStreamController {
     private var lastAppendDate: Date?
 
     private let onDisplayUpdate: (String) -> Void
+    /// True for callers that want the raw stream as it actually arrives —
+    /// the local API server relaying to an external HTTP client, which
+    /// should see real network-speed deltas, not the chat UI's deliberate
+    /// typing-reveal animation. Skips the throttled reveal loop entirely:
+    /// every `append` reflects immediately.
+    private let instant: Bool
 
-    init(onDisplayUpdate: @escaping (String) -> Void) {
+    init(instant: Bool = false, onDisplayUpdate: @escaping (String) -> Void) {
+        self.instant = instant
         self.onDisplayUpdate = onDisplayUpdate
     }
 
@@ -38,6 +45,12 @@ final class TypewriterStreamController {
         lastAppendDate = now
 
         characters.append(contentsOf: chunk)
+
+        if instant {
+            displayedCount = characters.count
+            onDisplayUpdate(String(characters))
+            return
+        }
         startTypingIfNeeded()
     }
 
@@ -46,6 +59,8 @@ final class TypewriterStreamController {
     }
 
     func waitUntilCaughtUp() async {
+        guard !instant else { return }
+
         while displayedCount < characters.count {
             try? await Task.sleep(for: tickDelay())
         }

@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Renders a plain-markdown text segment (no fenced code — that is handled
 /// upstream) into ChatGPT-style typographic blocks: headings, paragraphs,
-/// bullet / numbered lists, blockquotes and horizontal rules. Inline emphasis,
-/// `code`, and [links](…) are rendered via AttributedString.
+/// bullet / numbered lists, blockquotes, tables, and horizontal rules.
+/// Inline emphasis, `code`, and [links](…) are rendered via AttributedString.
 struct MarkdownBlockView: View {
     @Environment(\.themeColors) private var colors
     let text: String
@@ -88,6 +88,10 @@ struct MarkdownBlockView: View {
             .padding(.vertical, 4)
             .textSelection(.enabled)
 
+        case .table(let headers, let alignments, let rows):
+            table(headers: headers, alignments: alignments, rows: rows)
+                .padding(.vertical, 8)
+
         case .rule:
             Rectangle()
                 .fill(colors.borderSubtle)
@@ -97,6 +101,54 @@ struct MarkdownBlockView: View {
         case .spacer:
             Color.clear.frame(height: 6)
         }
+    }
+
+    // MARK: - Table
+
+    private func table(headers: [String], alignments: [MarkdownTableAlignment], rows: [[String]]) -> some View {
+        Grid(alignment: .top, horizontalSpacing: 0, verticalSpacing: 0) {
+            GridRow {
+                ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
+                    tableCell(header, alignment: alignment(at: index, in: alignments), isHeader: true)
+                }
+            }
+            Divider().overlay(colors.borderMedium).gridCellColumns(max(headers.count, 1))
+
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                GridRow {
+                    ForEach(Array(headers.indices), id: \.self) { colIndex in
+                        tableCell(colIndex < row.count ? row[colIndex] : "", alignment: alignment(at: colIndex, in: alignments), isHeader: false)
+                    }
+                }
+                if rowIndex != rows.count - 1 {
+                    Divider().overlay(colors.borderSubtle).gridCellColumns(max(headers.count, 1))
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(colors.backgroundSubtle)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(colors.borderSubtle, lineWidth: 1)
+        )
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func tableCell(_ text: String, alignment: MarkdownTableAlignment, isHeader: Bool) -> some View {
+        inline(text)
+            .font(AppFont.sans(fontSize - 1, weight: isHeader ? .semibold : .regular))
+            .foregroundStyle(isHeader ? colors.textPrimary : colors.textSecondary)
+            .multilineTextAlignment(alignment.textAlignment)
+            .frame(maxWidth: .infinity, alignment: alignment.frameAlignment)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .textSelection(.enabled)
+    }
+
+    private func alignment(at index: Int, in alignments: [MarkdownTableAlignment]) -> MarkdownTableAlignment {
+        index < alignments.count ? alignments[index] : .leading
     }
 
     private func inline(_ raw: String) -> Text {
@@ -118,12 +170,33 @@ struct MarkdownBlockView: View {
     }
 }
 
+enum MarkdownTableAlignment: Equatable {
+    case leading, center, trailing
+
+    var frameAlignment: Alignment {
+        switch self {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    var textAlignment: TextAlignment {
+        switch self {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+}
+
 enum MarkdownLine: Equatable {
     case heading(level: Int, String)
     case paragraph(String)
     case bullet(indent: Int, String)
     case numbered(indent: Int, number: Int, String)
     case quote(String)
+    case table(headers: [String], alignments: [MarkdownTableAlignment], rows: [[String]])
     case rule
     case spacer
 }
@@ -132,32 +205,59 @@ enum MarkdownLineParser {
     static func parse(_ input: String) -> [MarkdownLine] {
         var result: [MarkdownLine] = []
         let rawLines = input.components(separatedBy: "\n")
+        var i = 0
 
-        for raw in rawLines {
+        while i < rawLines.count {
+            let raw = rawLines[i]
             let trimmed = raw.trimmingCharacters(in: .whitespaces)
 
             if trimmed.isEmpty {
                 if case .spacer = result.last {} else if !result.isEmpty {
                     result.append(.spacer)
                 }
+                i += 1
                 continue
+            }
+
+            // Table: a row containing "|" immediately followed by a valid
+            // "| --- | --- |"-style separator row of the same width.
+            if trimmed.contains("|"), i + 1 < rawLines.count {
+                let headerCells = tableCells(trimmed)
+                let separatorCells = tableCells(rawLines[i + 1].trimmingCharacters(in: .whitespaces))
+                if headerCells.count >= 2, headerCells.count == separatorCells.count, isTableSeparatorRow(separatorCells) {
+                    let alignments = separatorCells.map(tableAlignment(for:))
+                    var rows: [[String]] = []
+                    var j = i + 2
+                    while j < rawLines.count {
+                        let rowTrimmed = rawLines[j].trimmingCharacters(in: .whitespaces)
+                        guard !rowTrimmed.isEmpty, rowTrimmed.contains("|") else { break }
+                        rows.append(tableCells(rowTrimmed))
+                        j += 1
+                    }
+                    result.append(.table(headers: headerCells, alignments: alignments, rows: rows))
+                    i = j
+                    continue
+                }
             }
 
             // Horizontal rule
             if trimmed == "---" || trimmed == "***" || trimmed == "___" {
                 result.append(.rule)
+                i += 1
                 continue
             }
 
             // Headings
             if let (level, content) = headingMatch(trimmed) {
                 result.append(.heading(level: level, content))
+                i += 1
                 continue
             }
 
             // Blockquote
             if trimmed.hasPrefix("> ") {
                 result.append(.quote(String(trimmed.dropFirst(2))))
+                i += 1
                 continue
             }
 
@@ -166,16 +266,19 @@ enum MarkdownLineParser {
             // Bullet list
             if let content = bulletContent(trimmed) {
                 result.append(.bullet(indent: indent, content))
+                i += 1
                 continue
             }
 
             // Numbered list
             if let (number, content) = numberedContent(trimmed) {
                 result.append(.numbered(indent: indent, number: number, content))
+                i += 1
                 continue
             }
 
             result.append(.paragraph(trimmed))
+            i += 1
         }
 
         // Trim trailing spacer.
@@ -224,5 +327,32 @@ enum MarkdownLineParser {
             else { break }
         }
         return min(spaces / 2, 3)
+    }
+
+    // MARK: - Table helpers
+
+    private static func tableCells(_ line: String) -> [String] {
+        var content = line
+        if content.hasPrefix("|") { content.removeFirst() }
+        if content.hasSuffix("|") { content.removeLast() }
+        return content.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func isTableSeparatorRow(_ cells: [String]) -> Bool {
+        guard !cells.isEmpty else { return false }
+        return cells.allSatisfy { cell in
+            var inner = Substring(cell)
+            if inner.first == ":" { inner.removeFirst() }
+            if inner.last == ":" { inner.removeLast() }
+            return !inner.isEmpty && inner.allSatisfy { $0 == "-" }
+        }
+    }
+
+    private static func tableAlignment(for cell: String) -> MarkdownTableAlignment {
+        let leading = cell.hasPrefix(":")
+        let trailing = cell.hasSuffix(":")
+        if leading && trailing { return .center }
+        if trailing { return .trailing }
+        return .leading
     }
 }

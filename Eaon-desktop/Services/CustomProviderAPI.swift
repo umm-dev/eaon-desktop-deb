@@ -14,8 +14,9 @@ struct CustomProviderAPIService {
         config: CustomProviderConfig,
         apiKey: String,
         modelId: String,
-        history: [(role: String, content: String)],
-        typewriter: TypewriterStreamController
+        history: [HistoryTurn],
+        typewriter: TypewriterStreamController,
+        nativeTools: NativeToolConfig? = nil
     ) async throws {
         guard let base = URL(string: config.baseURL), !config.baseURL.isEmpty else {
             throw APIClientError.unexpectedResponse("\"\(config.baseURL)\" isn't a valid base URL.")
@@ -23,10 +24,16 @@ struct CustomProviderAPIService {
 
         switch config.format {
         case .openAICompatible:
-            try await streamOpenAICompatible(base: base, apiKey: apiKey, modelId: modelId, history: history, typewriter: typewriter)
+            try await streamOpenAICompatible(base: base, apiKey: apiKey, modelId: modelId, history: history, typewriter: typewriter, nativeTools: nativeTools)
         case .anthropicMessages:
+            // Native tools deliberately not attached: Anthropic's tool_use
+            // wire shape is different, and the fenced-markup channel (still
+            // taught in the system prompt) works there — one honest gap,
+            // not a silent wrong-format request.
             try await streamAnthropicMessages(base: base, apiKey: apiKey, modelId: modelId, history: history, typewriter: typewriter)
         case .googleGemini:
+            // Same as Anthropic — Gemini's functionDeclarations shape is
+            // its own; markup remains the channel there.
             try await streamGoogleGemini(base: base, apiKey: apiKey, modelId: modelId, history: history, typewriter: typewriter)
         }
     }
@@ -37,8 +44,9 @@ struct CustomProviderAPIService {
         base: URL,
         apiKey: String,
         modelId: String,
-        history: [(role: String, content: String)],
-        typewriter: TypewriterStreamController
+        history: [HistoryTurn],
+        typewriter: TypewriterStreamController,
+        nativeTools: NativeToolConfig?
     ) async throws {
         var request = URLRequest(url: base.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
@@ -46,17 +54,31 @@ struct CustomProviderAPIService {
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let apiMessages = history.map { ["role": $0.role, "content": $0.content] }
-        let body: [String: Any] = ["model": modelId, "messages": apiMessages, "stream": true]
+        let apiMessages = history.map(\.openAICompatibleJSON)
+        var body: [String: Any] = ["model": modelId, "messages": apiMessages, "stream": true]
+        if let nativeTools {
+            body["tools"] = nativeTools.tools
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        let (bytes, http) = try await TransientHTTPRetry.send(request)
         if http.statusCode != 200 {
-            throw APIClientError.httpError(status: http.statusCode, message: try await Self.readErrorBody(bytes))
+            let message = try await Self.readErrorBody(bytes)
+            // Not every OpenAI-compatible endpoint/model supports the tools
+            // parameter (Ollama returns 400 for models without tool
+            // training, some proxies reject it outright). Chat must still
+            // work there — retry once without tools; the fenced-markup
+            // channel remains available to the model either way.
+            if nativeTools != nil, (400...422).contains(http.statusCode), message.lowercased().contains("tool") {
+                try await streamOpenAICompatible(base: base, apiKey: apiKey, modelId: modelId, history: history, typewriter: typewriter, nativeTools: nil)
+                return
+            }
+            throw APIClientError.httpError(status: http.statusCode, message: message)
         }
 
         var sawContent = false
+        var toolCalls = ToolCallAccumulator()
+        let reasoningBridge = ReasoningDeltaBridge()
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
             let payload = String(line.dropFirst(6))
@@ -65,12 +87,29 @@ struct CustomProviderAPIService {
             guard let data = payload.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let content = delta["content"] as? String else { continue }
+                  let delta = choices.first?["delta"] as? [String: Any] else { continue }
 
+            toolCalls.ingest(delta: delta)
+
+            let reasoning = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String)
+            if let combined = reasoningBridge.text(reasoning: reasoning, content: delta["content"] as? String) {
+                sawContent = true
+                await typewriter.append(combined)
+                await StatisticsTracker.shared.recordGeneratedCharacters(combined.count)
+            }
+        }
+
+        if let closing = reasoningBridge.closeIfNeeded() {
             sawContent = true
-            await typewriter.append(content)
-            await StatisticsTracker.shared.recordGeneratedCharacters(content.count)
+            await typewriter.append(closing)
+        }
+
+        // Native calls render as eaon:mcp fences appended to the same
+        // message — the one pipeline (chips, confirmation, execution)
+        // handles both channels identically from here on.
+        if let nativeTools, let fences = toolCalls.fencedBlocks(nameMap: nativeTools.nameMap) {
+            sawContent = true
+            await typewriter.append(fences)
         }
         if !sawContent { throw APIClientError.emptyResponse }
     }
@@ -81,7 +120,7 @@ struct CustomProviderAPIService {
         base: URL,
         apiKey: String,
         modelId: String,
-        history: [(role: String, content: String)],
+        history: [HistoryTurn],
         typewriter: TypewriterStreamController
     ) async throws {
         var request = URLRequest(url: base.appendingPathComponent("messages"))
@@ -94,7 +133,18 @@ struct CustomProviderAPIService {
         // Anthropic has no "system" role inside `messages` — it's a separate
         // top-level field.
         let systemText = history.filter { $0.role == "system" }.map(\.content).joined(separator: "\n\n")
-        let turns = history.filter { $0.role != "system" }.map { ["role": $0.role, "content": $0.content] }
+        let turns: [[String: Any]] = history.filter { $0.role != "system" }.map { turn in
+            guard !turn.images.isEmpty else { return ["role": turn.role, "content": turn.content] }
+            // Anthropic's documented convention: image blocks before the
+            // text that refers to them.
+            var blocks: [[String: Any]] = turn.images.map {
+                ["type": "image", "source": ["type": "base64", "media_type": $0.mimeType, "data": $0.base64]]
+            }
+            if !turn.content.isEmpty {
+                blocks.append(["type": "text", "text": turn.content])
+            }
+            return ["role": turn.role, "content": blocks]
+        }
 
         var body: [String: Any] = [
             "model": modelId,
@@ -138,7 +188,7 @@ struct CustomProviderAPIService {
         base: URL,
         apiKey: String,
         modelId: String,
-        history: [(role: String, content: String)],
+        history: [HistoryTurn],
         typewriter: TypewriterStreamController
     ) async throws {
         guard var components = URLComponents(
@@ -166,7 +216,13 @@ struct CustomProviderAPIService {
         let systemText = history.filter { $0.role == "system" }.map(\.content).joined(separator: "\n\n")
         var contents: [[String: Any]] = history
             .filter { $0.role != "system" }
-            .map { ["role": $0.role == "assistant" ? "model" : "user", "parts": [["text": $0.content]]] }
+            .map { turn in
+                var parts: [[String: Any]] = [["text": turn.content]]
+                for image in turn.images {
+                    parts.append(["inline_data": ["mime_type": image.mimeType, "data": image.base64]])
+                }
+                return ["role": turn.role == "assistant" ? "model" : "user", "parts": parts]
+            }
 
         if !systemText.isEmpty, !contents.isEmpty,
            var parts = contents[0]["parts"] as? [[String: Any]],

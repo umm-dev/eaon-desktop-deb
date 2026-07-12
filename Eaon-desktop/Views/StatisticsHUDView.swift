@@ -14,16 +14,16 @@ struct StatisticsHUDView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(tracker.selectedEngine)
-                .font(.system(size: 11, weight: .semibold))
+                .font(AppFont.mono(11, weight: .semibold))
                 .foregroundColor(colors.textPrimary)
                 .lineLimit(1)
 
             Text("RPM \(tracker.liveRPM) · TPM \(tracker.liveTPM) · \(Int(tracker.tokensPerSecond)) tok/s")
-                .font(.system(size: 10, design: .monospaced))
+                .font(AppFont.mono(10))
                 .foregroundColor(colors.textSecondary)
 
             Text(tracker.isGenerating ? "Generating…" : tracker.connectionState)
-                .font(.system(size: 10))
+                .font(AppFont.mono(10))
                 .foregroundColor(tracker.isGenerating ? generatingTextColor : colors.textTertiary)
         }
         .padding(.horizontal, 12)

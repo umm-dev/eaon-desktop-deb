@@ -39,7 +39,6 @@ struct RootView: View {
     @State private var showingNewProjectDialog = false
     @State private var projectPendingRename: Project?
     @State private var projectPendingDeletion: Project?
-    @State private var showingOnboarding = !KeychainService.hasAPIKey
     @State private var chatViewModel = ChatViewModel()
     @AppStorage("nerd_hud_enabled") private var nerdHUDEnabled = false
     @Bindable private var appearance = AppearanceSettings.shared
@@ -124,6 +123,34 @@ struct RootView: View {
                 )
             }
 
+            if let path = chatViewModel.pendingRunConfirmation {
+                RunConfirmationDialog(
+                    path: path,
+                    onAllow: { chatViewModel.respondToRunConfirmation(allow: true) },
+                    onDeny: { chatViewModel.respondToRunConfirmation(allow: false) }
+                )
+                .zIndex(20)
+            }
+
+            if let call = chatViewModel.pendingMCPCallConfirmation {
+                MCPCallConfirmationDialog(
+                    call: call,
+                    onAllow: { chatViewModel.respondToMCPCallConfirmation(allow: true) },
+                    onDeny: { chatViewModel.respondToMCPCallConfirmation(allow: false) }
+                )
+                .zIndex(20)
+            }
+
+            if let call = chatViewModel.pendingDesktopCallConfirmation {
+                DesktopCallConfirmationDialog(
+                    call: call,
+                    onAllowOnce: { chatViewModel.respondToDesktopCallConfirmation(.allowOnce) },
+                    onAllowAll: { chatViewModel.respondToDesktopCallConfirmation(.allowAll) },
+                    onDeny: { chatViewModel.respondToDesktopCallConfirmation(.deny) }
+                )
+                .zIndex(20)
+            }
+
             if let pending = conversationPendingRename {
                 RenameChatDialog(
                     conversation: pending,
@@ -204,15 +231,6 @@ struct RootView: View {
                 .zIndex(5)
             }
 
-            if showingOnboarding {
-                OnboardingView(chatViewModel: chatViewModel) {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        showingOnboarding = false
-                    }
-                }
-                .transition(.opacity)
-                .zIndex(10)
-            }
         }
         // Extend content up under the transparent title bar so the sidebar
         // card reaches the very top of the window and the traffic lights sit

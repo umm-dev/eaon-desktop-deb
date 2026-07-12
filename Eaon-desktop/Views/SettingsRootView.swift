@@ -4,6 +4,10 @@ private struct SettingsCategory: Identifiable, Hashable {
     let id: String
     let title: String
     let icon: String
+    /// Shows a small "BETA" pill next to this category in the sidebar —
+    /// for a feature real enough to ship but new enough that "still
+    /// stabilizing" is honest to say up front, not just implied.
+    var isBeta: Bool = false
 }
 
 /// Presented as a centered floating card over a dimmed backdrop — matching
@@ -33,10 +37,16 @@ struct SettingsRootView: View {
     private let mainCategories: [SettingsCategory] = [
         .init(id: "general",      title: "General",              icon: "gearshape"),
         .init(id: "instructions", title: "Custom Instructions",  icon: "text.quote"),
+        .init(id: "memory",       title: "Memory",                icon: "brain"),
+        .init(id: "plugins",      title: "Plugins",                icon: "puzzlepiece.extension"),
+        .init(id: "imageProviders", title: "Image Providers",     icon: "photo"),
+        .init(id: "computer",     title: "Computer Control",       icon: "desktopcomputer", isBeta: true),
+        .init(id: "localServer",  title: "Local API Server",      icon: "server.rack", isBeta: true),
         .init(id: "appearance",   title: "Appearance",           icon: "paintpalette"),
         .init(id: "shortcuts",    title: "Shortcuts",             icon: "keyboard"),
         .init(id: "privacy",      title: "Privacy",               icon: "lock.fill"),
         .init(id: "statistics",   title: "Statistics",            icon: "chart.bar"),
+        .init(id: "hardware",     title: "Hardware",              icon: "cpu"),
     ]
 
     private let providerCategories: [SettingsCategory] = [
@@ -51,6 +61,19 @@ struct SettingsRootView: View {
         guard selectedId.hasPrefix("custom-provider:") else { return nil }
         let idString = String(selectedId.dropFirst("custom-provider:".count))
         return customStore.configs.first { $0.id.uuidString == idString }
+    }
+
+    // Named rather than inline closures below — a multi-statement inline
+    // closure with two named arguments here previously tipped the whole
+    // (already large) `body` expression over SwiftUI's type-checker
+    // timeout, an unrelated-looking compile error dozens of lines away.
+    private func finishAddingProvider() {
+        isAddingProvider = false
+    }
+
+    private func switchToAquaFromAddProvider() {
+        isAddingProvider = false
+        selectedId = "aqua"
     }
 
     var body: some View {
@@ -92,62 +115,7 @@ struct SettingsRootView: View {
                     }
                     .padding(.horizontal, 8)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text("MODEL PROVIDERS")
-                                .font(AppFont.mono(10, weight: .semibold))
-                                .foregroundColor(colors.textTertiary)
-                                .tracking(0.8)
-                            Spacer()
-                            Button {
-                                isAddingProvider = true
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(colors.textTertiary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Add a custom provider")
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.top, 20)
-                        .padding(.bottom, 4)
-
-                        ForEach(providerCategories) { cat in
-                            SettingsSidebarRow(category: cat, isSelected: selectedId == cat.id)
-                                .onTapGesture { selectedId = cat.id }
-                        }
-
-                        ForEach(customStore.sortedConfigs) { config in
-                            CustomProviderSidebarRow(
-                                config: config,
-                                isSelected: selectedId == customProviderSelectionId(config),
-                                isEnabled: !modelPrefs.isProviderDisabled(.custom(config.id))
-                            )
-                            .onTapGesture { selectedId = customProviderSelectionId(config) }
-                        }
-
-                        Text("LOCAL")
-                            .font(AppFont.mono(10, weight: .medium))
-                            .foregroundColor(colors.textTertiary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 12)
-                            .padding(.bottom, 3)
-
-                        ForEach(LocalBackend.allCases) { backend in
-                            LocalBackendSidebarRow(
-                                backend: backend,
-                                isSelected: selectedId == "local:\(backend.rawValue)",
-                                isInstalled: localManager.installed.contains(backend),
-                                isActive: backend == .ollama
-                                    ? localManager.ollamaReachable
-                                    : localManager.activeSpawned?.backend == backend
-                            )
-                            .onTapGesture { selectedId = "local:\(backend.rawValue)" }
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 12)
+                    modelProvidersSection
                 }
             }
             .frame(width: 230)
@@ -167,15 +135,36 @@ struct SettingsRootView: View {
                         StatisticsView(chatViewModel: chatViewModel)
                     case "instructions":
                         CustomInstructionsSettingsView(chatViewModel: chatViewModel)
+                    case "memory":
+                        MemorySettingsView(chatViewModel: chatViewModel)
+                    case "plugins":
+                        PluginsSettingsView()
+                    case "imageProviders":
+                        ImageProvidersSettingsView()
+                    case "computer":
+                        ComputerControlSettingsView()
+                    case "localServer":
+                        LocalAPIServerSettingsView()
                     case "appearance":
                         AppearanceSettingsView()
                     case "shortcuts":
                         ShortcutsSettingsView()
                     case "privacy":
                         PrivacySettingsView(chatViewModel: chatViewModel)
+                    case "hardware":
+                        HardwareSettingsView()
                     default:
                         if let config = config(for: selectedId) {
+                            // `.id` forces SwiftUI to tear down and rebuild
+                            // this view (including its @State) when the
+                            // selected provider changes — without it, every
+                            // custom provider hits this same `default` case
+                            // at the same tree position, so SwiftUI reuses
+                            // the previous provider's view instance and its
+                            // stale `apiKeyInput`, leaking one provider's
+                            // key into the next one's Save.
                             CustomProviderDetailSettingsView(chatViewModel: chatViewModel, config: config)
+                                .id(config.id)
                         } else if selectedId.hasPrefix("local:"),
                            let backend = LocalBackend(rawValue: String(selectedId.dropFirst("local:".count))) {
                             LocalProviderSettingsView(chatViewModel: chatViewModel, backend: backend)
@@ -214,10 +203,89 @@ struct SettingsRootView: View {
         )
         .shadow(color: .black.opacity(0.3), radius: 40, y: 16)
         .sheet(isPresented: $isAddingProvider) {
-            CustomProviderEditorSheet(chatViewModel: chatViewModel, existing: nil) {
-                isAddingProvider = false
+            CustomProviderEditorSheet(
+                chatViewModel: chatViewModel,
+                existing: nil,
+                onDone: finishAddingProvider,
+                onWantsAqua: switchToAquaFromAddProvider
+            )
+        }
+    }
+
+    /// Pulled out of `card` as its own expression — inlined, this section
+    /// (header + Aqua/BYOK/local rows) was enough on its own to tip
+    /// SwiftUI's view-builder type-checker into "unable to type-check this
+    /// expression in reasonable time," a timeout that surfaces as an
+    /// unrelated-looking compile error somewhere else in the same giant
+    /// expression rather than pointing at the actual cause.
+    private var modelProvidersSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("MODEL PROVIDERS")
+                    .font(AppFont.mono(10, weight: .semibold))
+                    .foregroundColor(colors.textTertiary)
+                    .tracking(0.8)
+                Spacer()
+                Button {
+                    isAddingProvider = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(colors.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Add a custom provider")
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 20)
+            .padding(.bottom, 4)
+
+            // Aqua isn't pre-added for a new install — it's one provider
+            // option among several, not the app's default. It only earns
+            // a permanent row once a key is actually saved; until then,
+            // clicking "Add provider" opens the same neutral picker as
+            // any other provider (not straight to an Aqua-branded page)
+            // — Aqua is still reachable there as one of the picker's own
+            // options, just not the thing you land on by default.
+            if APIKeyStore.hasAPIKey {
+                ForEach(providerCategories) { cat in
+                    SettingsSidebarRow(category: cat, isSelected: selectedId == cat.id)
+                        .onTapGesture { selectedId = cat.id }
+                }
+            } else {
+                AddAquaRow { isAddingProvider = true }
+            }
+
+            ForEach(customStore.sortedConfigs) { config in
+                CustomProviderSidebarRow(
+                    config: config,
+                    isSelected: selectedId == customProviderSelectionId(config),
+                    isEnabled: !modelPrefs.isProviderDisabled(.custom(config.id))
+                )
+                .onTapGesture { selectedId = customProviderSelectionId(config) }
+            }
+
+            Text("LOCAL")
+                .font(AppFont.mono(10, weight: .medium))
+                .foregroundColor(colors.textTertiary)
+                .padding(.horizontal, 10)
+                .padding(.top, 12)
+                .padding(.bottom, 3)
+
+            ForEach(LocalBackend.allCases) { backend in
+                LocalBackendSidebarRow(
+                    backend: backend,
+                    isSelected: selectedId == "local:\(backend.rawValue)",
+                    isInstalled: localManager.installed.contains(backend),
+                    isActive: backend == .ollama
+                        ? localManager.ollamaReachable
+                        : localManager.activeSpawned?.backend == backend
+                )
+                .onTapGesture { selectedId = "local:\(backend.rawValue)" }
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 12)
     }
 }
 
@@ -240,6 +308,11 @@ private struct SettingsSidebarRow: View {
             Text(category.title)
                 .font(AppFont.mono(13, weight: isSelected ? .semibold : .regular))
                 .foregroundColor(isSelected ? colors.textPrimary : colors.textPrimary.opacity(0.8))
+                .lineLimit(1)
+
+            if category.isBeta {
+                BetaBadge()
+            }
 
             Spacer()
         }
@@ -253,20 +326,67 @@ private struct SettingsSidebarRow: View {
     }
 }
 
+/// A small "BETA" pill — same visual language as `ModelLibraryView`'s
+/// fit-estimate badges (tinted capsule, tiny mono caps), reused here for
+/// any settings category or page that isn't fully settled yet.
+struct BetaBadge: View {
+    var body: some View {
+        Text("BETA")
+            .font(AppFont.mono(9, weight: .bold))
+            .tracking(0.4)
+            .foregroundStyle(Color(hex: "#F59E0B"))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color(hex: "#F59E0B").opacity(0.14)))
+    }
+}
+
+/// Shown instead of a permanent "Aqua API" row until a key is actually
+/// saved — Aqua is offered, not pre-added, same as any other provider.
+private struct AddAquaRow: View {
+    @Environment(\.themeColors) private var colors
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(colors.borderMedium, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                        .frame(width: 26, height: 26)
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(colors.textTertiary)
+                }
+                Text("Add provider")
+                    .font(AppFont.mono(13, weight: .regular))
+                    .foregroundColor(colors.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Aqua's free hosted models — add a key to use it")
+    }
+}
+
 /// A configured BYOK connection's row — real brand logo badge + company
 /// name, plus a status dot matching the LOCAL section's own convention
 /// (filled green when this connection is currently enabled).
 private struct CustomProviderSidebarRow: View {
     @Environment(\.themeColors) private var colors
+    @Bindable private var customStore = CustomProviderStore.shared
     let config: CustomProviderConfig
     let isSelected: Bool
     let isEnabled: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            ProviderBadge(brand: config.brand, size: 24)
+            ProviderBadge(brand: config.brand, size: 24, customImage: customStore.logoImage(for: config))
 
-            Text(config.brand.companyName)
+            Text(config.displayName)
                 .font(AppFont.mono(13, weight: isSelected ? .semibold : .regular))
                 .foregroundColor(isSelected ? colors.textPrimary : colors.textPrimary.opacity(0.8))
 

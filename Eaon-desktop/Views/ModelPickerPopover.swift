@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One real, switchable connection — Aqua, or a specific BYOK config —
@@ -15,6 +16,7 @@ private struct ProviderGroup: Identifiable {
     let title: String
     let isEnabled: Bool
     let models: [APIModel]
+    var customLogo: NSImage? = nil
 }
 
 struct ModelPickerMenu: View {
@@ -190,9 +192,10 @@ private struct ModelPickerPopoverContent: View {
                 key: key,
                 settingsSelectionId: "custom-provider:\(config.id.uuidString)",
                 brand: config.brand,
-                title: config.brand.companyName,
+                title: config.displayName,
                 isEnabled: !modelPrefs.isProviderDisabled(key),
-                models: models.sorted(by: modelNameSort)
+                models: models.sorted(by: modelNameSort),
+                customLogo: CustomProviderStore.shared.logoImage(for: config)
             ))
         }
 
@@ -294,6 +297,7 @@ private struct ModelPickerPopoverContent: View {
                         title: group.title,
                         isEnabled: group.isEnabled,
                         isCollapsed: isCollapsed,
+                        customLogo: group.customLogo,
                         onToggleCollapsed: { modelPrefs.toggleProviderGroupCollapsed(group.key) },
                         onOpenSettings: {
                             isExpanded = false
@@ -320,6 +324,22 @@ private struct ModelPickerPopoverContent: View {
                                     isExpanded = false
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Image-generation models — a genuinely different
+                // capability (one prompt in, one image out, no
+                // conversation), kept as its own clearly-labeled section at
+                // the end rather than folded into the regular provider
+                // groups above, which are all chat models.
+                if !viewModel.imageModels.isEmpty {
+                    Divider().padding(.horizontal, 8).padding(.vertical, 6)
+                    ImageGenerationSectionHeader()
+                    ForEach(viewModel.imageModels) { model in
+                        MinimalModelRow(model: model, isSelected: viewModel.selectedModel == model.id) {
+                            viewModel.selectModel(model.id)
+                            isExpanded = false
                         }
                     }
                 }
@@ -380,6 +400,25 @@ private struct FavoritesSectionHeader: View {
     }
 }
 
+private struct ImageGenerationSectionHeader: View {
+    @Environment(\.themeColors) private var colors
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "photo")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(colors.textSecondary)
+            Text("Image Generation")
+                .font(AppFont.mono(13, weight: .semibold))
+                .foregroundStyle(colors.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .help("One prompt in, one image out — a different kind of model from the rest of this list")
+    }
+}
+
 private struct LocalSectionHeader: View {
     @Environment(\.themeColors) private var colors
     var body: some View {
@@ -413,6 +452,7 @@ private struct ProviderGroupHeader: View {
     let title: String
     let isEnabled: Bool
     let isCollapsed: Bool
+    var customLogo: NSImage? = nil
     let onToggleCollapsed: () -> Void
     let onOpenSettings: () -> Void
 
@@ -420,7 +460,7 @@ private struct ProviderGroupHeader: View {
         ZStack(alignment: .trailing) {
             Button(action: onToggleCollapsed) {
                 HStack(spacing: 8) {
-                    ProviderBadge(brand: brand, size: 22)
+                    ProviderBadge(brand: brand, size: 22, customImage: customLogo)
                         .opacity(isEnabled ? 1 : 0.45)
 
                     Text(title)

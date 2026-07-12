@@ -24,9 +24,7 @@ enum AttachmentStore {
     private static let folderName = "Attachments"
 
     static var directory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = base.appendingPathComponent("AquaChat", isDirectory: true)
-        let attachmentsDir = appDir.appendingPathComponent(folderName, isDirectory: true)
+        let attachmentsDir = AppDataLocation.directory.appendingPathComponent(folderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: attachmentsDir, withIntermediateDirectories: true)
         return attachmentsDir
     }
@@ -68,6 +66,19 @@ enum AttachmentStore {
             kind: .image,
             storedFileName: storedName
         )
+    }
+
+    /// For image bytes that already exist in memory — a generated image
+    /// fetched or decoded elsewhere — rather than a file on disk to copy or
+    /// the system pasteboard. Same storage convention as the other two
+    /// import paths, so a generated image is indistinguishable from a
+    /// pasted or uploaded one everywhere downstream (loading, deletion,
+    /// rendering all go through the same `MessageAttachment`).
+    static func importImageData(_ data: Data, fileName: String) throws -> MessageAttachment {
+        let storedName = "\(UUID().uuidString)-\(fileName)"
+        let destination = directory.appendingPathComponent(storedName)
+        try data.write(to: destination)
+        return MessageAttachment(fileName: fileName, kind: .image, storedFileName: storedName)
     }
 
     static func fileURL(for attachment: MessageAttachment) -> URL {

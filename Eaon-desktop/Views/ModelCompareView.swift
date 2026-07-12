@@ -8,7 +8,7 @@ struct ModelCompareView: View {
     @State private var vm = CompareViewModel()
     @State private var showingSystemPrompt = false
 
-    private var apiKey: String? { KeychainService.loadAPIKey() }
+    private var apiKey: String? { APIKeyStore.loadAPIKey() }
 
     var body: some View {
         VStack(spacing: 0) {

@@ -135,6 +135,22 @@ struct LocalModelRecord: Identifiable, Codable, Equatable {
     var source: String?
     var isFile: Bool?
     var addedAt: Date?
+    /// Real spec fields straight from Ollama's own `/api/tags` `details`
+    /// object for Ollama-sourced records (nil for llama.cpp/MLX ones, which
+    /// have no equivalent endpoint) — optional for the same decode-safety
+    /// reason as `source`/`isFile` above: old persisted records were saved
+    /// before these existed.
+    var paramSize: String?
+    var quantization: String?
+    var family: String?
+    var contextLength: Int?
+    /// True for an Ollama model whose real `/api/tags` `capabilities`
+    /// includes `"image"` — a genuinely different kind of model (diffusion,
+    /// not text) that `/api/chat` flatly 400s on ("does not support chat"),
+    /// discovered live against a real pulled model (x/flux2-klein). Optional
+    /// so older persisted records — everything before Ollama itself started
+    /// serving non-chat models — decode fine without this key.
+    var isImageGeneration: Bool?
 }
 
 // MARK: - Curated catalog (data-driven)
@@ -248,6 +264,11 @@ final class LocalAIManager {
     private(set) var startupStatus: String?
     private(set) var isPulling = false
     private(set) var pullStatus: String?
+    /// 0...1 whenever Ollama's pull stream reports real completed/total
+    /// byte counts for the current layer, nil otherwise (a status line with
+    /// no byte counts, e.g. "verifying sha256 digest") — so the UI can draw
+    /// a real determinate bar instead of guessing.
+    private(set) var pullFraction: Double?
     /// How long an idle Ollama model stays resident before Ollama frees its
     /// RAM — user-configurable because the right tradeoff depends on the
     /// machine (a Studio with 128GB might want models to just stay loaded;
@@ -321,10 +342,23 @@ final class LocalAIManager {
     // MARK: Ollama models
 
     struct OllamaTagsResponse: Codable {
+        struct Details: Codable {
+            let family: String?
+            let parameter_size: String?
+            let quantization_level: String?
+            let context_length: Int?
+        }
         struct Model: Codable {
             let name: String
             let size: Int64?
             let remote_host: String?
+            let details: Details?
+            /// Verified live: `["completion","tools",...]` for a normal chat
+            /// model, `["embedding"]` for an embedding model, `["image"]`
+            /// for a real diffusion model (x/flux2-klein) — the actual
+            /// structured signal Ollama itself gives for "can this take
+            /// /api/chat," instead of guessing from the name.
+            let capabilities: [String]?
         }
         let models: [Model]
     }
@@ -363,12 +397,22 @@ final class LocalAIManager {
         ollamaModels = tags.models
             .filter { $0.remote_host == nil && !$0.name.localizedCaseInsensitiveContains("embed") }
             .map { model in
-                LocalModelRecord(
+                // Ollama sends these as "" rather than omitting the key when
+                // a model has no meaningful value (e.g. an image model's
+                // quantization_level) — nilify so the UI's "only show a
+                // chip when there's real data" logic doesn't render blanks.
+                let nonEmpty: (String?) -> String? = { $0?.isEmpty == false ? $0 : nil }
+                return LocalModelRecord(
                     id: "ollama:\(model.name)",
                     requestModelId: model.name,
                     backend: .ollama,
                     displayName: model.name,
-                    detail: Self.formatBytes(model.size)
+                    detail: Self.formatBytes(model.size),
+                    paramSize: nonEmpty(model.details?.parameter_size),
+                    quantization: nonEmpty(model.details?.quantization_level),
+                    family: nonEmpty(model.details?.family),
+                    contextLength: model.details?.context_length,
+                    isImageGeneration: model.capabilities?.contains("image") == true
                 )
             }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
@@ -448,9 +492,11 @@ final class LocalAIManager {
         isPulling = true
         pullingModelName = trimmed
         pullStatus = "Starting download of \(trimmed)…"
+        pullFraction = nil
         defer {
             isPulling = false
             pullingModelName = nil
+            pullFraction = nil
         }
 
         var request = URLRequest(url: URL(string: "http://127.0.0.1:11434/api/pull")!)
@@ -473,9 +519,16 @@ final class LocalAIManager {
                 }
                 let status = json["status"] as? String ?? ""
                 if let completed = json["completed"] as? Double, let total = json["total"] as? Double, total > 0 {
-                    pullStatus = "\(status) — \(Int(completed / total * 100))%"
-                } else if !status.isEmpty {
-                    pullStatus = status
+                    let fraction = completed / total
+                    pullFraction = fraction
+                    pullStatus = "\(status) — \(Int(fraction * 100))%"
+                } else {
+                    // A status with no byte counts (e.g. "verifying sha256
+                    // digest") isn't part of the same 0...1 progression —
+                    // clearing it keeps the bar from freezing at the last
+                    // layer's fraction while a different phase runs.
+                    pullFraction = nil
+                    if !status.isEmpty { pullStatus = status }
                 }
             }
             pullStatus = "Done — \(trimmed) is ready."
@@ -515,6 +568,116 @@ final class LocalAIManager {
         return total > 0 ? total : nil
     }
 
+    struct OllamaModelSpecs: Equatable {
+        let paramSize: String?
+        let quantization: String?
+        let family: String?
+    }
+
+    /// Real parameter count, quantization, and architecture family for a
+    /// model that isn't downloaded yet — straight from Ollama's own public
+    /// registry, the same source `fetchOllamaRegistrySize` already reads.
+    /// The manifest's `config` layer digest points at a second small JSON
+    /// blob (`model_type`/`file_type`/`model_family`) that isn't in the
+    /// manifest itself, so this is a second request — verified live against
+    /// the real registry (2026-07-12) rather than assumed from docs, since
+    /// this shape isn't publicly documented anywhere. Context length isn't
+    /// available here (only for models already pulled — see
+    /// `LocalModelRecord.contextLength`, sourced from local `/api/tags`).
+    func fetchOllamaRegistrySpecs(name: String) async -> OllamaModelSpecs? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed.split(separator: ":", maxSplits: 1)
+        let repo = String(parts[0])
+        let tag = parts.count > 1 ? String(parts[1]) : "latest"
+        guard let manifestURL = URL(string: "https://registry.ollama.ai/v2/library/\(repo)/manifests/\(tag)") else { return nil }
+
+        var manifestRequest = URLRequest(url: manifestURL)
+        manifestRequest.timeoutInterval = 10
+        manifestRequest.addValue("application/vnd.docker.distribution.manifest.v2+json", forHTTPHeaderField: "Accept")
+
+        guard let (manifestData, manifestResponse) = try? await URLSession.shared.data(for: manifestRequest),
+              (manifestResponse as? HTTPURLResponse)?.statusCode == 200,
+              let manifestJSON = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let configDigest = (manifestJSON["config"] as? [String: Any])?["digest"] as? String,
+              let configURL = URL(string: "https://registry.ollama.ai/v2/library/\(repo)/blobs/\(configDigest)") else { return nil }
+
+        var configRequest = URLRequest(url: configURL)
+        configRequest.timeoutInterval = 10
+        guard let (configData, configResponse) = try? await URLSession.shared.data(for: configRequest),
+              (configResponse as? HTTPURLResponse)?.statusCode == 200,
+              let configJSON = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] else { return nil }
+
+        let paramSize = configJSON["model_type"] as? String
+        let quantization = configJSON["file_type"] as? String
+        let family = configJSON["model_family"] as? String
+        guard paramSize != nil || quantization != nil || family != nil else { return nil }
+        return OllamaModelSpecs(paramSize: paramSize, quantization: quantization, family: family)
+    }
+
+    struct OllamaPageSummary: Equatable {
+        /// Ollama's own one-line summary for the model (its `<meta
+        /// name="description">`) — short enough to quote directly with
+        /// attribution, unlike the page's full multi-paragraph "Highlights"
+        /// copy, which this deliberately does NOT fetch or reproduce.
+        let description: String?
+        /// URL of the model's benchmark chart image, still hosted on
+        /// ollama.com — meant to be loaded live (e.g. via `AsyncImage`)
+        /// rather than downloaded and cached by this app, so it's always
+        /// their real, current server response, never a stored copy.
+        let chartImageURL: URL?
+        let pageURL: URL
+    }
+
+    /// Reads just two things off a model's real ollama.com library page: its
+    /// short one-line description and the URL of its benchmark chart image
+    /// — never the page's longer "Highlights" prose, and never a downloaded
+    /// copy of the chart itself. There's no API for this (Ollama doesn't
+    /// publish one), so this parses the live HTML response directly; it's
+    /// deliberately narrow (two regex reads, not a general scraper) since
+    /// the goal is two verifiably-safe-to-show facts, not the whole page.
+    func fetchOllamaPageSummary(name: String) async -> OllamaPageSummary? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let base = String(trimmed.split(separator: ":", maxSplits: 1).first ?? Substring(trimmed))
+        guard let pageURL = URL(string: "https://ollama.com/library/\(base)") else { return nil }
+
+        var request = URLRequest(url: pageURL)
+        request.timeoutInterval = 10
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: data, encoding: .utf8) else { return nil }
+
+        let description = Self.extractMetaDescription(from: html)
+        let chartImageURL = Self.extractBenchmarkChartURL(from: html, base: base)
+        guard description != nil || chartImageURL != nil else { return nil }
+        return OllamaPageSummary(description: description, chartImageURL: chartImageURL, pageURL: pageURL)
+    }
+
+    nonisolated private static func extractMetaDescription(from html: String) -> String? {
+        guard let range = html.range(of: #"<meta name="description" content="([^"]*)""#, options: .regularExpression) else { return nil }
+        let tag = String(html[range])
+        guard let contentRange = tag.range(of: #"(?<=content=")[^"]*"#, options: .regularExpression) else { return nil }
+        let raw = String(tag[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        return raw
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+    }
+
+    /// Matches `ollama.com/assets/library/<base>/<id>` specifically (not
+    /// just any `/assets/library/` URL on the page) so a generic site asset
+    /// unrelated to this model's own benchmark chart is never picked up.
+    nonisolated private static func extractBenchmarkChartURL(from html: String, base: String) -> URL? {
+        let escapedBase = NSRegularExpression.escapedPattern(for: base)
+        let pattern = #"https://ollama\.com/assets/library/"# + escapedBase + #"/[a-f0-9-]+"#
+        guard let range = html.range(of: pattern, options: .regularExpression) else { return nil }
+        return URL(string: String(html[range]))
+    }
+
     // MARK: Ollama delete
 
     /// Removes a model from Ollama's local store (DELETE /api/delete).
@@ -551,6 +714,35 @@ final class LocalAIManager {
         let likes: Int
     }
 
+    /// Which runtime a Hugging Face search targets — GGUF for llama.cpp,
+    /// MLX for Apple's own framework (often faster than GGUF on Apple
+    /// Silicon, since it's built for this hardware specifically rather than
+    /// llama.cpp's broad-CPU/GPU portability).
+    enum HFModelFormat: CaseIterable, Hashable {
+        case gguf, mlx
+
+        var hfFilterValue: String {
+            switch self {
+            case .gguf: return "gguf"
+            case .mlx: return "mlx"
+            }
+        }
+
+        var backend: LocalBackend {
+            switch self {
+            case .gguf: return .llamaCpp
+            case .mlx: return .mlx
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .gguf: return "GGUF"
+            case .mlx: return "MLX"
+            }
+        }
+    }
+
     struct ModelDownloadState: Equatable {
         var status: String
         /// 0...1 when the total size is known, nil while indeterminate.
@@ -563,17 +755,21 @@ final class LocalAIManager {
     private(set) var hfDownloads: [String: ModelDownloadState] = [:]
     private var hfDownloadTasks: [String: Task<Void, Never>] = [:]
 
-    /// Live search of Hugging Face's public model API, restricted to GGUF
-    /// text-generation repos (what llama.cpp can actually run).
-    /// An empty query returns the current most-downloaded GGUF models across
-    /// all of Hugging Face instead of matching nothing — used to show a live
-    /// "Trending" list by default, so the tab never opens to a blank "type
-    /// something" prompt (verified: an empty `search=` param behaves
-    /// identically to omitting it, so this is the same call either way).
-    func searchHuggingFaceGGUF(_ query: String, limit: Int = 25) async -> [HFSearchResult] {
+    /// Live search of Hugging Face's public model API, restricted to
+    /// text-generation repos in the given runtime's format (what llama.cpp
+    /// or MLX can actually run — verified live that Hugging Face's own
+    /// `filter=mlx` correctly returns real MLX-format repos like
+    /// mlx-community/Kimi-K2.5, not a guessed/unverified param).
+    /// An empty query returns the current most-downloaded models across all
+    /// of Hugging Face in that format instead of matching nothing — used to
+    /// show a live "Trending" list by default, so the tab never opens to a
+    /// blank "type something" prompt (verified: an empty `search=` param
+    /// behaves identically to omitting it, so this is the same call either
+    /// way).
+    func searchHuggingFace(_ query: String, format: HFModelFormat, limit: Int = 25) async -> [HFSearchResult] {
         var components = URLComponents(string: "https://huggingface.co/api/models")!
         var items = [
-            URLQueryItem(name: "filter", value: "gguf"),
+            URLQueryItem(name: "filter", value: format.hfFilterValue),
             URLQueryItem(name: "pipeline_tag", value: "text-generation"),
             URLQueryItem(name: "sort", value: "downloads"),
             URLQueryItem(name: "limit", value: "\(limit)"),
@@ -600,8 +796,7 @@ final class LocalAIManager {
     /// Where in-app Hugging Face downloads live — files here are ours to
     /// delete when their model is removed (never user-picked files).
     static var managedModelsDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("AquaChat/Models", isDirectory: true)
+        AppDataLocation.directory.appendingPathComponent("Models", isDirectory: true)
     }
 
     /// True once a repo's file has been downloaded and registered.
@@ -755,6 +950,36 @@ final class LocalAIManager {
         }
         let smallest = candidates.min { $0.size < $1.size }!
         return (smallest.path, smallest.size)
+    }
+
+    /// An MLX repo has no single downloadable file the way GGUF does — it's
+    /// a folder of safetensors shards plus small config/tokenizer files that
+    /// `mlx_lm.server` fetches itself on first launch. For the same
+    /// before-you-commit "will this fit" estimate GGUF gets, this sums the
+    /// real per-file sizes from the same `/tree/main` listing GGUF discovery
+    /// already uses — just filtered to the files that actually carry the
+    /// weights instead of a single `.gguf` match.
+    func resolveMLXRepoSize(repo: String) async throws -> Int64 {
+        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+
+        struct TreeEntry: Codable {
+            let path: String
+            let size: Int64?
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let entries = try? JSONDecoder().decode([TreeEntry].self, from: data) else {
+            throw LocalAIError.startFailed(.mlx, "couldn't read that Hugging Face repo — check the name")
+        }
+        let weightFiles = entries.filter { $0.path.lowercased().hasSuffix(".safetensors") }
+        guard !weightFiles.isEmpty else {
+            throw LocalAIError.startFailed(.mlx, "that repo has no MLX weight files")
+        }
+        return weightFiles.reduce(0) { $0 + ($1.size ?? 0) }
     }
 
     nonisolated private static func quantLabel(from path: String) -> String {
@@ -954,7 +1179,15 @@ final class LocalAIManager {
             requestModelId: trimmed,
             backend: backend,
             displayName: isFile ? (trimmed as NSString).lastPathComponent : trimmed,
-            detail: isFile ? "GGUF file on this Mac" : "Hugging Face — downloads on first chat",
+            // The repo id has to actually appear in `detail` for a non-file
+            // entry — `downloadedModelId(forRepo:)`/`isHFRepoDownloaded`
+            // both match by `detail.contains(repo)` (the only signal they
+            // have, since `source` here is the repo string itself, not a
+            // local path the way a completed GGUF download's is). The old
+            // fixed generic string never matched, so an MLX repo added this
+            // way could never be recognized as already-added anywhere else
+            // in the app that checks those two functions.
+            detail: isFile ? "GGUF file on this Mac" : "Downloads on first chat · \(trimmed)",
             source: trimmed,
             isFile: isFile
         )
@@ -993,9 +1226,22 @@ final class LocalAIManager {
     var allLocalModels: [LocalModelRecord] { ollamaModels + userModels }
 
     /// Stand-in `APIModel`s so local models flow through the same picker and
-    /// chat plumbing as everything else.
+    /// chat plumbing as everything else. Excludes image-generation models
+    /// (see `LocalModelRecord.isImageGeneration`) — those go through
+    /// `imageSyntheticModels` instead, since `/api/chat` genuinely 400s on
+    /// them ("does not support chat"), confirmed live.
     var syntheticModels: [APIModel] {
-        allLocalModels.map { APIModel(id: $0.id, name: $0.displayName, type: "text", tier: nil) }
+        allLocalModels
+            .filter { $0.isImageGeneration != true }
+            .map { APIModel(id: $0.id, name: $0.displayName, type: "text", tier: nil) }
+    }
+
+    /// The image-generation counterpart — local Ollama models tagged with
+    /// the real `"image"` capability. Feeds `ChatViewModel.imageModels`.
+    var imageSyntheticModels: [APIModel] {
+        allLocalModels
+            .filter { $0.isImageGeneration == true }
+            .map { APIModel(id: $0.id, name: $0.displayName, type: "image", tier: nil) }
     }
 
     func record(withId id: String) -> LocalModelRecord? {

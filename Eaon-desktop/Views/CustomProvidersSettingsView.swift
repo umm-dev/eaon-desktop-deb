@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A single bring-your-own-key connection's own full settings page — laid
 /// out exactly like `AquaProviderSettingsView` (header card, then API key,
@@ -36,7 +38,7 @@ struct CustomProviderDetailSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(config.brand.companyName)
+            Text(config.displayName)
                 .font(AppFont.mono(20, weight: .bold))
                 .foregroundColor(colors.textPrimary)
                 .padding(.horizontal, 32)
@@ -105,20 +107,75 @@ struct CustomProviderDetailSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This deletes the saved key and model list for \(config.brand.companyName). Chats you already had with it are kept.")
+            Text("This deletes the saved key and model list for \(config.displayName). Chats you already had with it are kept.")
         }
+    }
+
+    /// The real brand + base URL, shown as context under the connection's
+    /// name only when a custom name actually replaces it there — otherwise
+    /// the title already says the brand, and repeating it would be noise.
+    private var providerSubtitle: String {
+        let base = config.baseURL.isEmpty ? "No base URL set" : config.baseURL
+        guard config.customName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return base }
+        return "\(config.brand.companyName) · \(base)"
+    }
+
+    private var currentLogoImage: NSImage? {
+        store.logoImage(for: config)
+    }
+
+    /// Click to pick a replacement image; right-click for the option to
+    /// go back to the brand's default. Mirrors the familiar "click your
+    /// account picture to change it" pattern rather than adding a whole
+    /// new row just for this.
+    private var providerLogoPicker: some View {
+        Button(action: pickLogo) {
+            ZStack(alignment: .bottomTrailing) {
+                ProviderBadge(brand: config.brand, size: 36, customImage: currentLogoImage)
+
+                ZStack {
+                    Circle().fill(colors.backgroundElevated)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(colors.textSecondary)
+                }
+                .frame(width: 16, height: 16)
+                .overlay(Circle().stroke(colors.borderSubtle, lineWidth: 1))
+                .offset(x: 4, y: 4)
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Change Logo…", action: pickLogo)
+            if config.customLogoFileName != nil {
+                Button("Reset to Default", role: .destructive) {
+                    store.setCustomLogo(fileName: nil, for: config.id)
+                }
+            }
+        }
+        .help("Change this connection's logo")
+    }
+
+    private func pickLogo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let fileName = ProviderLogoStore.saveLogo(from: url, replacing: config.customLogoFileName, for: config.id) else { return }
+        store.setCustomLogo(fileName: fileName, for: config.id)
     }
 
     private var providerCard: some View {
         SettingsCard {
             HStack(spacing: 12) {
-                ProviderBadge(brand: config.brand, size: 36)
+                providerLogoPicker
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(config.brand.companyName)
+                    Text(config.displayName)
                         .font(AppFont.mono(14, weight: .semibold))
                         .foregroundColor(colors.textPrimary)
-                    Text(config.baseURL.isEmpty ? "No base URL set" : config.baseURL)
+                    Text(providerSubtitle)
                         .font(AppFont.mono(12))
                         .foregroundColor(colors.textSecondary)
                 }
@@ -132,8 +189,8 @@ struct CustomProviderDetailSettingsView: View {
                 .toggleStyle(.switch)
                 .tint(AppearanceSettings.shared.accentColor)
                 .help(modelPrefs.isProviderDisabled(.custom(config.id))
-                      ? "Turn \(config.brand.companyName) back on"
-                      : "Turn \(config.brand.companyName) off — this connection only, doesn't affect Aqua or your other providers")
+                      ? "Turn \(config.displayName) back on"
+                      : "Turn \(config.displayName) off — this connection only, doesn't affect Aqua or your other providers")
             }
             .padding(16)
         }
@@ -146,7 +203,7 @@ struct CustomProviderDetailSettingsView: View {
                     .font(AppFont.mono(14, weight: .semibold))
                     .foregroundColor(colors.textPrimary)
 
-                Text("Your key is stored in the macOS Keychain on this device only and never written to plain-text storage.")
+                Text("Your key stays on this device — saved locally in the app's own settings, sent only as an authorization header when you send a message.")
                     .font(AppFont.sans(12))
                     .foregroundColor(colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -205,7 +262,7 @@ struct CustomProviderDetailSettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isFetchingModels)
-                    .help("Fetch the current model list from \(config.brand.companyName)")
+                    .help("Fetch the current model list from \(config.displayName)")
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
@@ -215,7 +272,7 @@ struct CustomProviderDetailSettingsView: View {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Fetching models from \(config.brand.companyName)…")
+                        Text("Fetching models from \(config.displayName)…")
                             .font(AppFont.mono(13))
                             .foregroundColor(colors.textSecondary)
                     }
@@ -349,7 +406,7 @@ struct CustomProviderDetailSettingsView: View {
 
         do {
             try store.save(config, apiKey: apiKeyInput)
-            saveMessage = "API key saved securely to Keychain."
+            saveMessage = "API key saved."
             saveFailed = false
         } catch {
             saveMessage = error.localizedDescription
@@ -409,8 +466,15 @@ struct CustomProviderEditorSheet: View {
     @Bindable var chatViewModel: ChatViewModel
     let existing: CustomProviderConfig?
     let onDone: () -> Void
+    /// Only offered when adding a brand-new connection (nil while editing
+    /// an existing one, where it wouldn't make sense) — Aqua isn't one of
+    /// `sortedBrands` here (it's the app's own backend, not a BYOK
+    /// connection), so this is its only way back for someone who opened
+    /// this generic sheet but actually wanted Aqua's free hosted models.
+    var onWantsAqua: (() -> Void)?
 
     @State private var brand: ProviderBrand
+    @State private var customName: String
     @State private var baseURL: String
     @State private var format: APIRequestFormat
     @State private var modelIDsText: String
@@ -462,12 +526,19 @@ struct CustomProviderEditorSheet: View {
             && (existing != nil || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
-    init(chatViewModel: ChatViewModel, existing: CustomProviderConfig?, onDone: @escaping () -> Void) {
+    init(
+        chatViewModel: ChatViewModel,
+        existing: CustomProviderConfig?,
+        onDone: @escaping () -> Void,
+        onWantsAqua: (() -> Void)? = nil
+    ) {
         self.chatViewModel = chatViewModel
         self.existing = existing
+        self.onWantsAqua = onWantsAqua
         self.onDone = onDone
         let initialBrand = existing?.brand ?? .openAI
         _brand = State(initialValue: initialBrand)
+        _customName = State(initialValue: existing?.customName ?? "")
         _baseURL = State(initialValue: existing?.baseURL ?? KnownProviderDefaults.baseURL(for: initialBrand) ?? "")
         _format = State(initialValue: existing?.format ?? KnownProviderDefaults.format(for: initialBrand))
         _modelIDsText = State(initialValue: (existing?.modelIDs ?? []).joined(separator: "\n"))
@@ -519,27 +590,31 @@ struct CustomProviderEditorSheet: View {
                     .font(AppFont.sans(12))
                     .foregroundColor(colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let onWantsAqua {
+                    Button(action: onWantsAqua) {
+                        Text("Looking for Aqua's free hosted models instead?")
+                            .font(AppFont.mono(11, weight: .medium))
+                            .foregroundColor(colors.link)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 fieldLabel("Provider")
-                Picker("", selection: $brand) {
-                    ForEach(sortedBrands, id: \.self) { brand in
-                        Text(brand.companyName).tag(brand)
+                BrandPickerDropdown(brands: sortedBrands, selection: $brand)
+                    .onChange(of: brand) { _, newBrand in
+                        // Refresh the auto-filled URL when it's still one of ours
+                        // (empty, or a known default) — never clobber a URL the
+                        // user typed themselves.
+                        let current = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if current.isEmpty || KnownProviderDefaults.allKnownBaseURLs.contains(current) {
+                            baseURL = KnownProviderDefaults.baseURL(for: newBrand) ?? ""
+                        }
+                        format = KnownProviderDefaults.format(for: newBrand)
+                        scheduleAutoFetch()
                     }
-                }
-                .labelsHidden()
-                .onChange(of: brand) { _, newBrand in
-                    // Refresh the auto-filled URL when it's still one of ours
-                    // (empty, or a known default) — never clobber a URL the
-                    // user typed themselves.
-                    let current = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if current.isEmpty || KnownProviderDefaults.allKnownBaseURLs.contains(current) {
-                        baseURL = KnownProviderDefaults.baseURL(for: newBrand) ?? ""
-                    }
-                    format = KnownProviderDefaults.format(for: newBrand)
-                    scheduleAutoFetch()
-                }
                 if hasAutoSetup {
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")
@@ -549,6 +624,15 @@ struct CustomProviderEditorSheet: View {
                     }
                     .foregroundColor(colors.textTertiary)
                 }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                fieldLabel("Name (optional)")
+                textField(brand.companyName, text: $customName)
+                Text("What this connection is called everywhere in Eaon — the model picker, its settings row. Leave blank to just use \"\(brand.companyName)\".")
+                    .font(AppFont.sans(11))
+                    .foregroundColor(colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -565,7 +649,7 @@ struct CustomProviderEditorSheet: View {
                             .stroke(colors.borderSubtle, lineWidth: 1)
                     )
                     .onChange(of: apiKey) { _, _ in scheduleAutoFetch() }
-                Text("You get this from your \(brand.companyName) account (usually under \"API keys\"). It's stored securely in your Mac's Keychain.")
+                Text("You get this from your \(brand.companyName) account (usually under \"API keys\"). It stays on this device only.")
                     .font(AppFont.sans(11))
                     .foregroundColor(colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -780,6 +864,8 @@ struct CustomProviderEditorSheet: View {
     private func save() {
         var config = existing ?? CustomProviderConfig(brand: brand, baseURL: baseURL, format: format, modelIDs: [])
         config.brand = brand
+        let trimmedName = customName.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.customName = trimmedName.isEmpty ? nil : trimmedName
         config.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         config.format = format
         config.modelIDs = parsedModelIDs
@@ -790,5 +876,118 @@ struct CustomProviderEditorSheet: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Brand picker
+
+/// A logo-and-name dropdown for choosing a provider's brand — the real
+/// mark next to the name, everywhere the plain-text native picker used to
+/// be. Built custom instead of `Picker` specifically so the trigger and
+/// every row can show `BrandLogoView`, which a native menu item can't.
+private struct BrandPickerDropdown: View {
+    @Environment(\.themeColors) private var colors
+    let brands: [ProviderBrand]
+    @Binding var selection: ProviderBrand
+    @State private var isOpen = false
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            isOpen.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(colors.backgroundSubtle)
+                    .frame(width: 28, height: 28)
+                    .overlay { BrandLogoView(brand: selection, size: 16) }
+
+                Text(selection.companyName)
+                    .font(AppFont.mono(13, weight: .medium))
+                    .foregroundColor(colors.textPrimary)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(colors.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(isHovered ? colors.backgroundHover : colors.backgroundInput)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(colors.borderSubtle, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(PressableButtonStyle())
+        .onHover { isHovered = $0 }
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            BrandPickerList(brands: brands, selection: $selection, isOpen: $isOpen)
+        }
+    }
+}
+
+private struct BrandPickerList: View {
+    @Environment(\.themeColors) private var colors
+    let brands: [ProviderBrand]
+    @Binding var selection: ProviderBrand
+    @Binding var isOpen: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(brands, id: \.self) { brand in
+                    BrandPickerRow(brand: brand, isSelected: brand == selection) {
+                        selection = brand
+                        isOpen = false
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 280, height: min(CGFloat(brands.count) * 42 + 12, 340))
+        .background(colors.backgroundPopover)
+    }
+}
+
+private struct BrandPickerRow: View {
+    @Environment(\.themeColors) private var colors
+    let brand: ProviderBrand
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(colors.backgroundSubtle)
+                    .frame(width: 28, height: 28)
+                    .overlay { BrandLogoView(brand: brand, size: 16) }
+
+                Text(brand.companyName)
+                    .font(AppFont.mono(13))
+                    .foregroundColor(colors.textPrimary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(AppearanceSettings.shared.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(isSelected ? colors.backgroundSelected : (isHovered ? colors.backgroundHover : .clear))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }

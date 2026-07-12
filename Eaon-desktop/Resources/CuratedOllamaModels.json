@@ -112,6 +112,22 @@
       "category": "Popular"
     },
     {
+      "name": "gpt-oss",
+      "blurb": "OpenAI's first open-weight model — strong reasoning, built for agentic tasks",
+      "approxSize": "≈14 GB",
+      "sizeBytes": 13793440755,
+      "brand": "openAI",
+      "category": "Popular"
+    },
+    {
+      "name": "glm4",
+      "blurb": "Zhipu's GLM — a strong multilingual general model",
+      "approxSize": "≈5.5 GB",
+      "sizeBytes": 5455325746,
+      "brand": "zhipu",
+      "category": "Popular"
+    },
+    {
       "name": "llama3.3",
       "blurb": "Meta's largest current model — also in Popular above",
       "approxSize": "≈43 GB",

@@ -124,7 +124,8 @@ struct StatisticsView: View {
                     .font(AppFont.mono(13, weight: .medium))
                         .foregroundColor(colors.textPrimary.opacity(0.85))
             }
-            .toggleStyle(.checkbox)
+            .toggleStyle(.switch)
+            .tint(appearance.accentColor)
 
             if nerdHUDEnabled {
                 Divider().frame(height: 14)
@@ -147,7 +148,7 @@ struct StatisticsView: View {
     }
 
     private var liveChartCard: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("LIVE MOVING CHART (TPM)")
@@ -170,7 +171,7 @@ struct StatisticsView: View {
     // MARK: - Three-column panels
 
     private var runtimePanel: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 10) {
                 sectionLabel("RUNTIME")
                 headline("Session Uptime: \(StatisticsTracker.formatUptime(tracker.sessionUptime))")
@@ -187,7 +188,7 @@ struct StatisticsView: View {
     }
 
     private var currentChatPanel: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 10) {
                 sectionLabel("CURRENT CHAT")
                 headline(tracker.hasActiveChat ? "Active chat" : "No active chat")
@@ -202,7 +203,7 @@ struct StatisticsView: View {
     }
 
     private var enginePanel: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 10) {
                 sectionLabel("ENGINE")
                 headline(tracker.selectedEngine)
@@ -227,7 +228,7 @@ struct StatisticsView: View {
     // MARK: - Historical section
 
     private var dateRangeCard: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Date Range")
                     .font(AppFont.mono(13, weight: .semibold))
@@ -249,7 +250,7 @@ struct StatisticsView: View {
     }
 
     private var usagePatternCard: some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     ZStack {
@@ -279,7 +280,7 @@ struct StatisticsView: View {
 
     private var promptsByModelCard: some View {
         let byModel = tracker.promptsByModel(in: dateRange)
-        return StatSurfaceCard {
+        return SettingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: "cpu")
@@ -304,7 +305,7 @@ struct StatisticsView: View {
                             Spacer()
                             Text("\(item.count)")
                                 .font(AppFont.mono(13, weight: .semibold))
-                                .foregroundColor(Color(hex: "#4dabf7"))
+                                .foregroundColor(appearance.accentColor)
                         }
                     }
                 }
@@ -317,7 +318,7 @@ struct StatisticsView: View {
         let weekday = tracker.mostActiveWeekday(in: dateRange)
         let counts = sundayFirstWeekdayCounts()
 
-        return StatSurfaceCard {
+        return SettingsCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 8) {
                     Image(systemName: "calendar")
@@ -330,7 +331,7 @@ struct StatisticsView: View {
 
                 Text(weekday.name == "—" ? "—" : weekday.name)
                     .font(AppFont.mono(22, weight: .bold))
-                    .foregroundColor(Color(hex: "#e8957a"))
+                    .foregroundColor(appearance.accentColor)
 
                 VStack(spacing: 8) {
                     ForEach(0..<7, id: \.self) { index in
@@ -388,33 +389,42 @@ struct StatisticsView: View {
 
     private enum BadgeStyle { case success, idle }
 
+    /// Same tinted-capsule convention as `ModelFitBadge`/`ProviderBadge`
+    /// elsewhere in the app (foreground color at low opacity as its own
+    /// background) instead of a separately hand-picked dark fill — that
+    /// approach only ever looked right in dark mode, since a flat literal
+    /// like #1a3d2e reads as a muddy blob against a light background.
+    /// `.idle` uses the app's own neutral secondary color rather than an
+    /// arbitrary third hue, since nothing about "idle" is semantically
+    /// orange.
     private func badgeRow(_ label: String, _ value: String, style: BadgeStyle) -> some View {
-        HStack {
+        let tint = style == .success ? Color(hex: "#34C759") : colors.textSecondary
+        return HStack {
             Text("\(label):")
                 .font(AppFont.mono(11))
                 .foregroundColor(colors.textSecondary)
             Spacer()
             Text(value)
                 .font(AppFont.mono(10, weight: .semibold))
-                .foregroundColor(style == .success ? Color(hex: "#6ee7a0") : Color(hex: "#d4a574"))
+                .foregroundColor(tint)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(style == .success ? Color(hex: "#1a3d2e") : Color(hex: "#3d2e1a"))
+                        .fill(tint.opacity(0.16))
                 )
         }
     }
 
     private func summaryTile(_ title: String, value: Int) -> some View {
-        StatSurfaceCard {
+        SettingsCard {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title)
                     .font(AppFont.mono(12))
                     .foregroundColor(colors.textSecondary)
                 Text("\(value)")
                     .font(AppFont.mono(36, weight: .bold))
-                    .foregroundColor(Color(hex: "#4dabf7"))
+                    .foregroundColor(appearance.accentColor)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -428,6 +438,7 @@ struct StatisticsView: View {
                 .foregroundColor(colors.textSecondary)
             DatePicker("", selection: selection, displayedComponents: .date)
                 .labelsHidden()
+                .tint(appearance.accentColor)
         }
     }
 
@@ -463,7 +474,7 @@ struct StatisticsView: View {
                             .fill(colors.backgroundSubtle)
                     if count > 0 {
                         Capsule()
-                            .fill(Color(hex: "#4dabf7").opacity(0.85))
+                            .fill(appearance.accentColor.opacity(0.85))
                             .frame(width: max(8, geo.size.width * barFraction(for: count)))
                     }
                 }
@@ -495,13 +506,13 @@ extension StatisticsView {
             return sum + ModelPricingStore.estimatedCost(tokens: entry.tokens, modelId: entry.modelId, tier: tier)
         }
 
-        return StatSurfaceCard {
+        return SettingsCard {
             HStack(spacing: 0) {
-                costStatCell("Tokens Generated", value: "\(totalTok)", icon: "number", color: Color(hex: "#4dabf7"))
+                costStatCell("Tokens Generated", value: "\(totalTok)", icon: "number", color: appearance.accentColor)
                 Divider().frame(height: 50)
-                costStatCell("Est. Cost", value: ModelPricingStore.formatCost(totalCost), icon: "dollarsign.circle", color: Color(hex: "#6ee7a0"))
+                costStatCell("Est. Cost", value: ModelPricingStore.formatCost(totalCost), icon: "dollarsign.circle", color: Color(hex: "#34C759"))
                 Divider().frame(height: 50)
-                costStatCell("Models Used", value: "\(allByModel.count)", icon: "cpu", color: Color(hex: "#d4a574"))
+                costStatCell("Models Used", value: "\(allByModel.count)", icon: "cpu", color: colors.textSecondary)
             }
             .padding(.vertical, 16)
         }
@@ -526,7 +537,7 @@ extension StatisticsView {
         let byModel = tracker.tokensByModel(in: dateRange)
         let maxTok = byModel.first?.tokens ?? 1
 
-        return StatSurfaceCard {
+        return SettingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: "chart.bar.fill")
@@ -580,7 +591,7 @@ extension StatisticsView {
                 ZStack(alignment: .leading) {
                     Capsule().fill(colors.backgroundSubtle)
                     Capsule()
-                        .fill(Color(hex: "#4dabf7").opacity(0.75))
+                        .fill(appearance.accentColor.opacity(0.75))
                         .frame(width: max(6, geo.size.width * CGFloat(tokens) / CGFloat(max(maxTokens, 1))))
                 }
             }
@@ -593,7 +604,7 @@ extension StatisticsView {
 
             Text(ModelPricingStore.formatCost(cost))
                 .font(AppFont.mono(11, weight: .semibold))
-                .foregroundColor(Color(hex: "#6ee7a0"))
+                .foregroundColor(Color(hex: "#34C759"))
                 .frame(width: 70, alignment: .trailing)
         }
     }
@@ -601,7 +612,7 @@ extension StatisticsView {
     var costByDayCard: some View {
         let byDay = tracker.tokensByDay(in: dateRange)
 
-        return StatSurfaceCard {
+        return SettingsCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: "calendar")
@@ -620,27 +631,11 @@ extension StatisticsView {
     }
 }
 
-// MARK: - Shared surfaces
-
-private struct StatSurfaceCard<Content: View>: View {
-    @Environment(\.themeColors) private var colors
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .background(colors.backgroundElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(colors.borderSubtle, lineWidth: 1)
-            )
-    }
-}
-
 // MARK: - Charts
 
 private struct TPMLineChartView: View {
     @Environment(\.themeColors) private var colors
+    @Bindable private var appearance = AppearanceSettings.shared
     let values: [Double]
 
     var body: some View {
@@ -679,13 +674,13 @@ private struct TPMLineChartView: View {
                             }
                         }
                     }
-                    .stroke(Color(hex: "#4dabf7"), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .stroke(appearance.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 } else {
                     Path { path in
                         path.move(to: CGPoint(x: 24, y: chartHeight))
                         path.addLine(to: CGPoint(x: geo.size.width, y: chartHeight))
                     }
-                    .stroke(Color(hex: "#4dabf7"), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(appearance.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 }
             }
         }
@@ -696,6 +691,7 @@ private struct TPMLineChartView: View {
 
 private struct UsageGridChartView: View {
     @Environment(\.themeColors) private var colors
+    @Bindable private var appearance = AppearanceSettings.shared
     let data: [(date: Date, count: Int)]
 
     var body: some View {
@@ -725,7 +721,7 @@ private struct UsageGridChartView: View {
                         path.move(to: CGPoint(x: 24, y: chartHeight))
                         path.addLine(to: CGPoint(x: geo.size.width, y: chartHeight))
                     }
-                    .stroke(Color(hex: "#4dabf7").opacity(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(appearance.accentColor.opacity(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 } else {
                     Path { path in
                         for (index, day) in days.enumerated() {
@@ -740,7 +736,7 @@ private struct UsageGridChartView: View {
                             }
                         }
                     }
-                    .stroke(Color(hex: "#4dabf7"), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .stroke(appearance.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
                     ForEach(Array(days.enumerated()), id: \.offset) { index, day in
                         let x = 24 + (CGFloat(index) / CGFloat(max(days.count - 1, 1))) * chartWidth
@@ -768,6 +764,7 @@ private struct UsageGridChartView: View {
 
 private struct TokenDayChartView: View {
     @Environment(\.themeColors) private var colors
+    @Bindable private var appearance = AppearanceSettings.shared
     let data: [(date: Date, tokens: Int)]
 
     var body: some View {
@@ -797,7 +794,7 @@ private struct TokenDayChartView: View {
                             else       { path.addLine(to: CGPoint(x: x, y: y)) }
                         }
                     }
-                    .stroke(Color(hex: "#6ee7a0"), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .stroke(Color(hex: "#34C759"), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
                     ForEach(Array(days.enumerated()), id: \.offset) { i, day in
                         let x = 24 + (CGFloat(i) / CGFloat(days.count - 1)) * chartWidth
@@ -811,7 +808,7 @@ private struct TokenDayChartView: View {
                         path.move(to: CGPoint(x: 24, y: chartHeight))
                         path.addLine(to: CGPoint(x: geo.size.width, y: chartHeight))
                     }
-                    .stroke(Color(hex: "#6ee7a0").opacity(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(Color(hex: "#34C759").opacity(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 }
             }
         }
