@@ -57,7 +57,8 @@
      This one doesn't hit the Gatekeeper prompt again, since it isn't
      downloaded through a browser.
 
-   Upload **both** files to your host.
+   Upload **both** files to your host — see "Where the files actually go"
+   below before picking one; not every host works.
 4. Edit the hosted manifest JSON (shape in `update-manifest.sample.json`):
    - `latestVersion` — the new version, e.g. `"2026.1.1"`
    - `downloadURL` — the uploaded **`.zip`**'s URL (not the dmg — that one's
@@ -68,6 +69,39 @@
 Every already-installed copy sees the new manifest on its next launch and
 shows the card. That's the whole pipeline — no rebuild of anything
 server-side, just one JSON edit plus two file uploads.
+
+## Where the files actually go
+
+Two hosts, both learned the hard way (2026-07-12):
+
+- **Cloudflare Pages can't take the `.zip`.** Pages auto-extracts any zip
+  uploaded as a project (it's a static-site host, not a blob host) and
+  enforces a hard 25MB-per-file cap regardless — the universal
+  (arm64+x86_64) binary alone is ~32MB. No folder-wrapping or packaging
+  trick gets around this; it's a product mismatch, not a config issue.
+  Pages is still fine for the tiny `update-manifest.json` itself.
+- **GitHub Releases work, but not on a private repo.** `eaon-desktop` is
+  private, so release-asset download URLs there 404 for anyone without a
+  GitHub token — including this app's own self-updater, which downloads
+  anonymously. The fix: release binaries live in a separate **public**
+  repo, [`sanscreates/eaon-releases`](https://github.com/sanscreates/eaon-releases)
+  (source stays private in `eaon-desktop`). Tag and publish each release
+  there:
+
+  ```
+  gh release create v<version> \
+    dist/Eaon-<version>.zip dist/Eaon-<version>.dmg \
+    --repo sanscreates/eaon-releases \
+    --title "Eaon <version>" \
+    --notes-file <changelog-excerpt>.md \
+    --target main
+  ```
+
+  `downloadURL` in the manifest then points at
+  `https://github.com/sanscreates/eaon-releases/releases/download/v<version>/Eaon-<version>.zip`.
+  Verify it's actually public before trusting it — `curl -sL <url> -o
+  /tmp/x -w "%{http_code}"` with no auth header should return 200, not
+  404.
 
 ## Known limits (deliberate, for now)
 

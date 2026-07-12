@@ -1,5 +1,5 @@
 {
-  "latestVersion": "2026.1.1",
-  "downloadURL": "https://downloads.eaon.dev/Eaon-2026.1.1.zip",
-  "releaseNotes": "• Faster model switching\n• New provider settings pages\n• Bug fixes and performance improvements"
+  "latestVersion": "2026.1.8",
+  "downloadURL": "https://github.com/sanscreates/eaon-releases/releases/download/v2026.1.8/Eaon-2026.1.8.zip",
+  "releaseNotes": "• Image generation — API or local models, zero setup\n• Model name/logo shown on every reply\n• Multi-step replies now render as one message, with a live \"what's happening\" indicator\n• A \"Thinking\" dropdown for models that use real reasoning (DeepSeek-R1, QwQ, etc.)\n• \"Always allow tool calls\" — skip confirmation for code execution and plugin calls\n• Local API Server — run a local OpenAI-compatible server other tools can connect to\n• Fixed a stray line in the sidebar; fixed local image models that failed with \"does not support chat\""
 }
