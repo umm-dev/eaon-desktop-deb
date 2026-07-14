@@ -3,6 +3,38 @@
 All notable changes to Eaon are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/) — newest release on top.
 
+## [2026.2.0] — 2026-07-14
+
+### Added
+- MCP & Skill integration — connect any custom MCP server with a pasted
+  token, and install a Skill Library from GitHub or your own local Claude
+  Code skills. Invoke any enabled skill directly in chat with
+  `/skill-name`.
+- A rebuilt memory system — Eaon can learn from your conversations over
+  time (with consent), remembering specific things you've shared instead
+  of only static facts, and can learn from a file you pick or from a
+  connected plugin's results.
+- Live code streaming with syntax highlighting — watch code appear in
+  color as the model writes it, and the chat no longer yanks you back to
+  the bottom while you're scrolled up reading.
+- A per-model CPU/GPU control for downloaded Hugging Face (llama.cpp)
+  models — force CPU-only, force max GPU, or leave it on auto.
+
+### Fixed
+- Chat mode not actually writing code to disk when asked.
+- The sidebar re-sorting your chats out of order just from clicking
+  between them.
+- Several Hugging Face model download/run issues: a hard crash on
+  Gemma-family models, misleading "try a different quantization" advice
+  when a model's whole architecture isn't supported, and a truncated
+  error log that hid the real reason a model failed to load.
+- Deleting a downloaded model reporting success without actually freeing
+  disk space.
+- A confusing "wait for models to load from the Aqua API" message
+  appearing even when the real issue had nothing to do with Aqua.
+- `pip`'s "externally-managed-environment" error when Eaon's agent tries
+  to install a Python package.
+
 ## [2026.1.9] — 2026-07-13
 
 ### Added
