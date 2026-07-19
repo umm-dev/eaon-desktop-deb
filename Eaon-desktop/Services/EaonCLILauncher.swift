@@ -50,17 +50,27 @@ enum EaonCLILauncher {
         return output
     }
 
-    /// Where `dist/cli.js` might live: bundled inside the app (a future
-    /// packaged copy, dropped under Resources at build time) or — for this
-    /// dev-checkout phase — the `eaon-cli` sibling directory next to this
-    /// Swift package's own source, resolved from the source file's own
-    /// on-disk path so it works from an Xcode/`swift build` run without
-    /// hardcoding the developer's home directory.
+    /// Where `dist/cli.js` might live, checked in priority order:
+    /// 1. **Installed** (`~/.eaon/cli-app/dist/cli.js`) — the writable copy
+    ///    `install()` produces. This is the only location a real end-user
+    ///    install ever runs from.
+    /// 2. **Dev checkout** — the `eaon-cli` sibling directory next to this
+    ///    Swift package's own source, resolved from the source file's own
+    ///    on-disk path (`#filePath`) so it works from an Xcode/`swift build`
+    ///    run without hardcoding the developer's home directory. Lets this
+    ///    app's own developer iterate on the CLI without clicking Install
+    ///    after every change.
+    ///
+    /// Deliberately does NOT count the read-only bundled Resources copy (see
+    /// `bundledPayloadDirectory()`) as a runnable entry point — that copy is
+    /// install *source*, not something to execute in place. `Status.canInstall`
+    /// reports its presence separately so the Settings panel can offer the
+    /// Install button.
     private static func findCLIEntryPoint() -> String? {
         let fm = FileManager.default
-        if let bundled = Bundle.main.url(forResource: "cli", withExtension: "js", subdirectory: "eaon-cli/dist")?.path,
-           fm.fileExists(atPath: bundled) {
-            return bundled
+        let installed = installedDirectory + "/dist/cli.js"
+        if fm.fileExists(atPath: installed) {
+            return installed
         }
         // #filePath is this source file's own on-disk location at compile
         // time — walking up from Eaon-desktop/Services/ to the repo root
@@ -106,6 +116,9 @@ enum EaonCLILauncher {
         let cliDirectory: String?
         /// The CLI's package version (read from its `package.json`), or nil.
         let version: String?
+        /// A read-only bundled copy exists inside the app and isn't installed
+        /// yet — the Settings panel shows the Install button when this is true.
+        let canInstall: Bool
 
         /// Both halves present → Eaon Code can launch the real CLI.
         var isReady: Bool { nodePath != nil && entryPoint != nil }
@@ -121,8 +134,103 @@ enum EaonCLILauncher {
             nodePath: node,
             entryPoint: entryPoint,
             cliDirectory: directory,
-            version: directory.flatMap(readVersion(inDirectory:))
+            version: directory.flatMap(readVersion(inDirectory:)),
+            canInstall: entryPoint == nil && bundledPayloadDirectory() != nil
         )
+    }
+
+    // MARK: - Install
+
+    /// The writable copy `install()` produces `dist/cli.js` runs from —
+    /// distinct from `configDirectory` (`~/.eaon/cli`), which is the CLI's
+    /// own config/session storage, not its program files.
+    static var installedDirectory: String {
+        NSHomeDirectory() + "/.eaon/cli-app"
+    }
+
+    /// Where a global `eaon` shim script gets written. Not guaranteed to be
+    /// on `PATH` (macOS shells don't add `~/.local/bin` by default) — the
+    /// Settings panel says so plainly rather than pretending this always works.
+    static var globalCommandPath: String {
+        NSHomeDirectory() + "/.local/bin/eaon"
+    }
+
+    /// The read-only, pre-built `eaon-cli` copy shipped inside the app
+    /// bundle (`Contents/Resources/eaon-cli/`, added by `build-installer.sh`)
+    /// — the install source. Nil in an Xcode/`swift build` dev run, where
+    /// there's nothing bundled and `findCLIEntryPoint()`'s dev-checkout
+    /// fallback is used directly instead.
+    private static func bundledPayloadDirectory() -> String? {
+        guard let resourceURL = Bundle.main.url(forResource: "eaon-cli", withExtension: nil) else { return nil }
+        let entryPoint = resourceURL.appendingPathComponent("dist/cli.js").path
+        return FileManager.default.fileExists(atPath: entryPoint) ? resourceURL.path : nil
+    }
+
+    enum InstallError: LocalizedError {
+        case noBundledPayload
+        case copyFailed(Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .noBundledPayload:
+                return "This build doesn't have Eaon CLI bundled — nothing to install."
+            case .copyFailed(let error):
+                return "Couldn't install Eaon CLI: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Copies the bundled CLI to `installedDirectory` and writes the global
+    /// `eaon` shim. Pure file I/O — no network, no npm — so it's fast and
+    /// works offline. Call off the main thread.
+    static func install() throws {
+        guard let source = bundledPayloadDirectory() else { throw InstallError.noBundledPayload }
+        let fm = FileManager.default
+        do {
+            if fm.fileExists(atPath: installedDirectory) {
+                try fm.removeItem(atPath: installedDirectory)
+            }
+            try fm.createDirectory(
+                atPath: (installedDirectory as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true
+            )
+            try fm.copyItem(atPath: source, toPath: installedDirectory)
+            try writeGlobalShim()
+        } catch {
+            throw InstallError.copyFailed(error)
+        }
+    }
+
+    /// Removes both the installed copy and the global shim. Leaves the
+    /// bundled payload untouched, so Install can run again afterward.
+    static func uninstall() {
+        let fm = FileManager.default
+        try? fm.removeItem(atPath: installedDirectory)
+        try? fm.removeItem(atPath: globalCommandPath)
+    }
+
+    /// A POSIX shim rather than a hardcoded `node` path, so it keeps working
+    /// if the user's Node install moves (nvm version switch, a later Homebrew
+    /// upgrade, …) — mirrors `commonNodePaths`' search order in shell form.
+    private static func writeGlobalShim() throws {
+        let fm = FileManager.default
+        let binDir = (globalCommandPath as NSString).deletingLastPathComponent
+        try fm.createDirectory(atPath: binDir, withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        # Written by Eaon.app's "Install Eaon CLI" — safe to delete.
+        for candidate in /opt/homebrew/bin/node /usr/local/bin/node "$HOME/.local/bin/node" "$HOME/.nvm/current/bin/node" /usr/bin/node; do
+          if [ -x "$candidate" ]; then NODE="$candidate"; break; fi
+        done
+        if [ -z "$NODE" ]; then NODE=$(command -v node); fi
+        if [ -z "$NODE" ]; then
+          echo "eaon: Node.js not found. Install it (e.g. brew install node) and try again." >&2
+          exit 1
+        fi
+        exec "$NODE" "\(installedDirectory)/dist/cli.js" "$@"
+        """
+        try script.write(toFile: globalCommandPath, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: globalCommandPath)
     }
 
     /// Where the CLI's own config + sessions live (`~/.eaon/cli/`) — the same

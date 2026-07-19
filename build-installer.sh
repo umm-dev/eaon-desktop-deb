@@ -24,6 +24,15 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
+echo "== Building Eaon CLI (bundled for in-app install)…"
+# Built in an isolated staging copy — never touches eaon-cli/node_modules,
+# which is the developer's own dev environment (tsx/typescript included) and
+# would break if pruned to production-only deps here.
+CLI_STAGE=$(mktemp -d)
+mkdir -p "$CLI_STAGE"
+cp -R eaon-cli/src eaon-cli/package.json eaon-cli/package-lock.json eaon-cli/tsconfig.json "$CLI_STAGE/"
+(cd "$CLI_STAGE" && npm ci && npm run build && npm prune --omit=dev)
+
 echo "== Building Eaon $VERSION (universal release: arm64 + x86_64)…"
 swift build -c release --arch arm64 --arch x86_64
 
@@ -31,6 +40,11 @@ PRODUCTS=".build/apple/Products/Release"
 APP="dist/Eaon.app"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+echo "== Bundling Eaon CLI into ${APP}…"
+mkdir -p "$APP/Contents/Resources/eaon-cli"
+cp -R "$CLI_STAGE/dist" "$CLI_STAGE/node_modules" "$CLI_STAGE/package.json" "$APP/Contents/Resources/eaon-cli/"
+rm -rf "$CLI_STAGE"
 
 echo "== Assembling ${APP}…"
 cp "$PRODUCTS/Eaon-desktop" "$APP/Contents/MacOS/Eaon"

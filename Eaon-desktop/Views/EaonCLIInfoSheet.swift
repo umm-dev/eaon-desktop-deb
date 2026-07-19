@@ -19,6 +19,8 @@ struct EaonCLIInfoSheet: View {
     @State private var status: EaonCLILauncher.Status?
     @State private var isLoading = true
     @State private var copiedField: String?
+    @State private var isInstalling = false
+    @State private var installErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,6 +30,9 @@ struct EaonCLIInfoSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     aboutCard
                     statusCard
+                    if status?.canInstall == true {
+                        installCard
+                    }
                     terminalCard
                     configCard
                     referenceCard
@@ -142,7 +147,11 @@ struct EaonCLIInfoSheet: View {
                 statusLine(
                     label: "CLI build",
                     ok: status?.entryPoint != nil,
-                    detail: status?.entryPoint ?? "Not built yet — run the setup commands below"
+                    detail: status?.entryPoint ?? (
+                        status?.canInstall == true
+                            ? "Not installed yet — click Install below"
+                            : "Not built yet — run the setup commands below"
+                    )
                 )
 
                 if status?.isReady == true {
@@ -173,6 +182,75 @@ struct EaonCLIInfoSheet: View {
                     .textSelection(.enabled)
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: Install
+
+    private var installCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Install Eaon CLI")
+                    .font(AppFont.mono(13, weight: .semibold))
+                    .foregroundStyle(colors.textPrimary)
+                Text("A ready-to-run copy ships inside this app. Installing copies it to \(displayPath(EaonCLILauncher.installedDirectory)) and links a global `eaon` command — no download, no npm, works offline.")
+                    .font(AppFont.sans(12))
+                    .foregroundStyle(colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let installErrorMessage {
+                    Text(installErrorMessage)
+                        .font(AppFont.sans(11))
+                        .foregroundStyle(Color(hex: "#F59E0B"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
+                    Button {
+                        installEaonCLI()
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isInstalling {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.down.circle.fill").font(.system(size: 11))
+                            }
+                            Text(isInstalling ? "Installing…" : "Install Eaon CLI")
+                                .font(AppFont.mono(12, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .disabled(isInstalling)
+                    Spacer()
+                }
+
+                Text("If `eaon` doesn't run in a new terminal afterward, add `~/.local/bin` to your PATH — macOS shells don't include it by default.")
+                    .font(AppFont.sans(10.5))
+                    .foregroundStyle(colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func displayPath(_ path: String) -> String {
+        path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+
+    private func installEaonCLI() {
+        isInstalling = true
+        installErrorMessage = nil
+        Task {
+            do {
+                try await Task.detached { try EaonCLILauncher.install() }.value
+                let resolved = await Task.detached { EaonCLILauncher.status() }.value
+                status = resolved
+            } catch {
+                installErrorMessage = error.localizedDescription
+            }
+            isInstalling = false
         }
     }
 
