@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Locates a runnable `node dist/cli.js` for the already-built `eaon-cli`
 /// package and a `node` binary to run it with, so Eaon Code's embedded
@@ -110,15 +111,23 @@ enum EaonCLILauncher {
     struct Status {
         /// The resolved `node` binary, or nil if none was found.
         let nodePath: String?
-        /// The built `dist/cli.js`, or nil if the CLI hasn't been built.
+        /// The built `dist/cli.js` actually used to LAUNCH the CLI (Eaon
+        /// Code, `resolve()`) — prefers the real install, falls back to a
+        /// sibling dev checkout so this app's own developer never has to
+        /// reinstall after every change. NOT what Install/Update are based
+        /// on — see `installedVersion` for that.
         let entryPoint: String?
         /// The `eaon-cli` project directory (parent of `dist/`), or nil.
         let cliDirectory: String?
-        /// The CLI's package version (read from its `package.json`), or nil.
+        /// The version of whatever `entryPoint` actually resolves to — for
+        /// display (the header's "vX") and the "Run it in any terminal"
+        /// commands, not for deciding whether to offer Install/Update.
         let version: String?
-        /// A read-only bundled copy exists inside the app and isn't installed
-        /// yet — the Settings panel shows the Install button when this is true.
-        let canInstall: Bool
+        /// The version of the REAL writable install at `installedDirectory`
+        /// specifically — nil when nothing is installed there, regardless
+        /// of whether a dev checkout happens to satisfy `entryPoint`
+        /// instead. This is what Install/Update actually compare against.
+        let installedVersion: String?
         /// The bundled copy's own version, whether or not anything is
         /// installed yet — `nil` in a dev build with nothing bundled.
         let bundledVersion: String?
@@ -126,13 +135,22 @@ enum EaonCLILauncher {
         /// Both halves present → Eaon Code can launch the real CLI.
         var isReady: Bool { nodePath != nil && entryPoint != nil }
 
+        /// True when nothing is installed at `installedDirectory` yet AND a
+        /// bundled copy exists to install — independent of whether a dev
+        /// checkout lets `entryPoint`/`isReady` already succeed, so the
+        /// Install button still offers a REAL install on a developer's own
+        /// machine instead of silently no-opping just because a sibling
+        /// checkout happens to already make the CLI launchable.
+        var canInstall: Bool { installedVersion == nil && bundledVersion != nil }
+
         /// Non-nil exactly when something is already installed AND the copy
-        /// bundled in this app build is newer — the Settings panel shows the
-        /// Update button (instead of Install) when this is set. A fresh
-        /// install always runs the newest bundled copy already, so this and
-        /// `canInstall` can never both be true at once.
+        /// bundled in this app build is newer than THAT install — the
+        /// Settings panel shows the Update button (instead of Install) when
+        /// this is set. Compares against `installedVersion`, not `version`,
+        /// so a dev-checkout fallback satisfying `entryPoint` can never
+        /// mask a real pending update (or manufacture a fake one).
         var updateAvailable: String? {
-            guard !canInstall, let installed = version, let bundled = bundledVersion,
+            guard let installed = installedVersion, let bundled = bundledVersion,
                   EaonCLILauncher.isNewerVersion(bundled, than: installed) else { return nil }
             return bundled
         }
@@ -164,12 +182,18 @@ enum EaonCLILauncher {
         let entryPoint = findCLIEntryPoint()
         let directory = cliDirectory(fromEntryPoint: entryPoint)
         let bundledDir = bundledPayloadDirectory()
+        // Specifically the real install — NOT `directory`/`entryPoint`,
+        // which may resolve to a dev checkout instead. Read directly rather
+        // than reusing `cliDirectory(fromEntryPoint:)`'s fallback logic.
+        let installedVersion: String? = FileManager.default.fileExists(atPath: installedDirectory + "/dist/cli.js")
+            ? readVersion(inDirectory: installedDirectory)
+            : nil
         return Status(
             nodePath: node,
             entryPoint: entryPoint,
             cliDirectory: directory,
             version: directory.flatMap(readVersion(inDirectory:)),
-            canInstall: entryPoint == nil && bundledDir != nil,
+            installedVersion: installedVersion,
             bundledVersion: bundledDir.flatMap(readVersion(inDirectory:))
         )
     }
@@ -318,5 +342,83 @@ enum EaonCLILauncher {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = json["version"] as? String else { return nil }
         return version
+    }
+}
+
+/// Drives the floating "Eaon CLI update available" card — same idea as
+/// `UpdateChecker`, just for the CLI's bundled-copy install instead of a
+/// network download. `EaonCLILauncher` itself stays a plain, actor-free
+/// enum (it's called off the main thread elsewhere); this is the
+/// `@MainActor` UI-facing wrapper around it.
+@MainActor
+@Observable
+final class EaonCLIUpdateStore {
+    static let shared = EaonCLIUpdateStore()
+
+    enum UpdateState: Equatable {
+        case idle
+        case updating
+        case done
+        case failed(String)
+    }
+
+    /// Non-nil exactly while the card should be showing — the newer
+    /// bundled version.
+    private(set) var available: String?
+    private(set) var state: UpdateState = .idle
+
+    private static let snoozedVersionKey = "eaon_cli_update_snoozed_version"
+    private static let snoozeUntilKey = "eaon_cli_update_snooze_until"
+
+    private init() {}
+
+    /// Background check (launch): silent unless something's actually
+    /// installed already AND a genuinely newer, non-snoozed bundled copy
+    /// exists. A first-time install (nothing installed yet) is discovered
+    /// via Settings, not this card — nobody needs to be interrupted with a
+    /// popup for a feature they've never turned on.
+    func checkOnLaunch() async {
+        let status = await Task.detached { EaonCLILauncher.status() }.value
+        guard let newer = status.updateAvailable, !Self.isSnoozed(newer) else { return }
+        withAnimation(.uiEaseOut(duration: 0.45)) { available = newer }
+    }
+
+    /// Hides the card and stays quiet about THIS version for 24 hours —
+    /// same per-version (not global) snooze as the app's own update card.
+    func remindLater() {
+        guard let available else { return }
+        UserDefaults.standard.set(available, forKey: Self.snoozedVersionKey)
+        UserDefaults.standard.set(Date().addingTimeInterval(24 * 60 * 60), forKey: Self.snoozeUntilKey)
+        withAnimation(.uiEaseOut(duration: 0.35)) { self.available = nil }
+        state = .idle
+    }
+
+    private static func isSnoozed(_ version: String) -> Bool {
+        guard UserDefaults.standard.string(forKey: snoozedVersionKey) == version,
+              let until = UserDefaults.standard.object(forKey: snoozeUntilKey) as? Date else { return false }
+        return Date() < until
+    }
+
+    /// Copies the newer bundled CLI over the installed one — pure local
+    /// file I/O, so this finishes almost instantly rather than needing a
+    /// real download-progress state. Config/sessions are untouched (see
+    /// `EaonCLILauncher.install`'s doc comment) — the card says so.
+    func updateNow() {
+        guard available != nil else { return }
+        guard state != .updating else { return }
+        state = .updating
+        Task {
+            do {
+                try await Task.detached { try EaonCLILauncher.update() }.value
+                state = .done
+                // Let the UI show "Updated" for a beat before it vanishes,
+                // same as the app's own "Restarting…" pause.
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                withAnimation(.uiEaseOut(duration: 0.35)) { available = nil }
+                state = .idle
+            } catch {
+                state = .failed(error.localizedDescription)
+            }
+        }
     }
 }

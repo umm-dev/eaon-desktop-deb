@@ -20,6 +20,9 @@ struct OnboardingView: View {
     /// Dismisses onboarding with no further navigation — "Skip" from any
     /// step, or the final step's own "I'll figure it out later".
     var onFinish: () -> Void = {}
+    /// Called after the free week actually started (mint succeeded) — the
+    /// parent refreshes the model list and dismisses onboarding.
+    var onTrialStarted: () -> Void = {}
 
     @State private var step = 0
     @State private var appeared = false
@@ -191,6 +194,18 @@ struct OnboardingView: View {
                 .foregroundStyle(colors.textSecondary)
 
             getStartedOption(
+                icon: "gift.fill",
+                title: TrialStore.shared.isStarting ? "Starting your free week…" : "Start your free week",
+                description: trialOptionDescription,
+                action: {
+                    guard !TrialStore.shared.isStarting else { return }
+                    Task {
+                        await TrialStore.shared.start()
+                        if TrialStore.shared.isActive { onTrialStarted() }
+                    }
+                }
+            )
+            getStartedOption(
                 icon: "cpu",
                 title: "Run models on this Mac",
                 description: "Download an open model and chat with it fully offline — private, free, no key needed.",
@@ -211,6 +226,13 @@ struct OnboardingView: View {
                 .foregroundStyle(colors.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private var trialOptionDescription: String {
+        if let error = TrialStore.shared.lastError {
+            return error
+        }
+        return "7 days of hosted models, on the house — one click, no account, no card."
     }
 
     private func getStartedOption(icon: String, title: String, description: String, action: @escaping () -> Void) -> some View {

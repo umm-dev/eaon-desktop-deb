@@ -62,6 +62,7 @@ struct RootView: View {
     @AppStorage("eaon_workspace_panel_width") private var workspacePanelWidth = 440.0
     @Bindable private var appearance = AppearanceSettings.shared
     @Bindable private var updateChecker = UpdateChecker.shared
+    @Bindable private var cliUpdateStore = EaonCLIUpdateStore.shared
 
     private var resolvedScheme: ColorScheme {
         appearance.theme.colorScheme ?? systemColorScheme
@@ -264,18 +265,33 @@ struct RootView: View {
                         selection = .settings("aqua")
                         hasSeenOnboarding = true
                     },
-                    onFinish: { hasSeenOnboarding = true }
+                    onFinish: { hasSeenOnboarding = true },
+                    onTrialStarted: {
+                        hasSeenOnboarding = true
+                        // Refetch through the trial gateway so the picker
+                        // shows exactly the models the free week can run.
+                        Task { await chatViewModel.fetchModels() }
+                    }
                 )
                 .zIndex(30)
             }
 
-            if let manifest = updateChecker.available {
+            if updateChecker.available != nil || cliUpdateStore.available != nil {
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
-                        UpdateBanner(manifest: manifest)
-                            .padding(20)
+                        // Stacked, not side-by-side — the rare case both are
+                        // pending at once shouldn't force the window wider.
+                        VStack(alignment: .trailing, spacing: 14) {
+                            if let cliVersion = cliUpdateStore.available {
+                                EaonCLIUpdateBanner(version: cliVersion)
+                            }
+                            if let manifest = updateChecker.available {
+                                UpdateBanner(manifest: manifest)
+                            }
+                        }
+                        .padding(20)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

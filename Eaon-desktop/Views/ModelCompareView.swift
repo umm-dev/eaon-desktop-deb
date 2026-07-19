@@ -8,7 +8,8 @@ struct ModelCompareView: View {
     @State private var vm = CompareViewModel()
     @State private var showingSystemPrompt = false
 
-    private var apiKey: String? { APIKeyStore.loadAPIKey() }
+    // User key or an active free-week trial — either powers Compare.
+    private var apiKey: String? { AquaAccess.current?.apiKey }
 
     var body: some View {
         VStack(spacing: 0) {

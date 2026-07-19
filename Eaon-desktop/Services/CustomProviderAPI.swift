@@ -64,7 +64,6 @@ struct CustomProviderAPIService {
         var request = URLRequest(url: base.appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
         request.timeoutInterval = 120
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let apiMessages = history.map(\.openAICompatibleJSON)
@@ -77,6 +76,11 @@ struct CustomProviderAPIService {
             for (key, value) in extraFields { body[key] = value }
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // After the body on purpose: a free-week trial credential flowing
+        // through this path (Quick Assistant routes the hosted models here)
+        // signs the exact request bytes; ordinary BYOK keys get the same
+        // plain bearer header as before.
+        AquaAccess.authorize(&request, apiKey: apiKey)
 
         let (bytes, http) = try await TransientHTTPRetry.send(request)
         if http.statusCode != 200 {

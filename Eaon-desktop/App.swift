@@ -32,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             await UpdateChecker.shared.checkOnLaunch()
         }
+        // Same idea, for the bundled Eaon CLI install — silent unless
+        // something's already installed and this app build bundles a
+        // newer copy.
+        Task { @MainActor in
+            await EaonCLIUpdateStore.shared.checkOnLaunch()
+        }
         // Silent, same as above — a stale/expired plugin token shouldn't
         // greet the user with an error before they've asked for anything,
         // it should just leave that Plugins row showing "Connect" again.

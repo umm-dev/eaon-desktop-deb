@@ -14,7 +14,17 @@ enum AquaAPI {
 
 struct AquaAPIService {
     func fetchModels() async throws -> [APIModel] {
-        var request = URLRequest(url: AquaAPI.modelsURL)
+        // During a free-week trial (no user key), the list comes from Eaon's
+        // gateway — signed, and already server-filtered to the models the
+        // trial plan can actually run. With a user key (or no access at
+        // all), the public Aqua list is fetched exactly as before.
+        var request: URLRequest
+        if let access = AquaAccess.current, access.isTrial {
+            request = URLRequest(url: access.modelsURL)
+            AquaAccess.authorize(&request, apiKey: access.apiKey)
+        } else {
+            request = URLRequest(url: AquaAPI.modelsURL)
+        }
         request.timeoutInterval = 30
         // Same gateway that flaps 502 on chat completions serves this list —
         // retry transient 5xx so one blip during an origin hiccup doesn't

@@ -255,15 +255,18 @@ final class QuickAssistantViewModel {
             return Route(config: config, apiKey: "local-no-key", requestModelId: record.requestModelId)
         }
 
-        guard let aquaKey = APIKeyStore.loadAPIKey(), !aquaKey.isEmpty else {
-            throw QuickAssistantError(message: "Add an API key or a local model in the main Eaon window first.")
+        // User key or free-week trial — the trial's base URL and signing
+        // ride the same BYOK streaming path (see CustomProviderAPIService's
+        // AquaAccess.authorize call).
+        guard let access = AquaAccess.current else {
+            throw QuickAssistantError(message: "Add an API key (or start your free week) or a local model in the main Eaon window first.")
         }
         let config = CustomProviderConfig(
             brand: ModelCatalog.brand(for: modelId),
-            baseURL: AquaAPI.baseURL.absoluteString,
+            baseURL: access.baseURL.absoluteString,
             format: .openAICompatible,
             modelIDs: [modelId]
         )
-        return Route(config: config, apiKey: aquaKey, requestModelId: modelId)
+        return Route(config: config, apiKey: access.apiKey, requestModelId: modelId)
     }
 }

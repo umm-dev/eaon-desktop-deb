@@ -1709,12 +1709,18 @@ class ChatViewModel {
             // Local servers don't authenticate; they ignore the header.
             return GenerationRouting(customConfig: nil, localRecord: localRecord, apiKey: "local-no-key")
         } else {
-            guard let aquaKey = APIKeyStore.loadAPIKey(), !aquaKey.isEmpty else {
-                appendSystemError("Add your Eaon API key in Settings → Eaon API to start chatting.")
+            // User key first, else an active free-week trial (which routes
+            // to Eaon's own gateway) — see AquaAccess.
+            guard let access = AquaAccess.current else {
+                appendSystemError(
+                    TrialStore.shared.isExpired
+                        ? "Your free week has ended. Add your Eaon API key in Settings → Eaon API to keep chatting."
+                        : "Start your free week (Settings → Eaon API) or add your Eaon API key to start chatting."
+                )
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
                 return nil
             }
-            return GenerationRouting(customConfig: nil, localRecord: nil, apiKey: aquaKey)
+            return GenerationRouting(customConfig: nil, localRecord: nil, apiKey: access.apiKey)
         }
     }
 
@@ -1793,11 +1799,11 @@ class ChatViewModel {
         let localRecord = customConfig == nil ? LocalAIManager.shared.record(withId: selectedModel) : nil
         var aquaApiKey: String?
         if customConfig == nil, localRecord == nil {
-            guard let key = APIKeyStore.loadAPIKey(), !key.isEmpty else {
-                memoryBackfillStatus = "Add your Eaon API key first, or switch to a model that already has one."
+            guard let access = AquaAccess.current else {
+                memoryBackfillStatus = "Add your Eaon API key (or start your free week) first, or switch to a model that already has one."
                 return
             }
-            aquaApiKey = key
+            aquaApiKey = access.apiKey
         }
 
         let accessed = url.startAccessingSecurityScopedResource()
@@ -1854,11 +1860,11 @@ class ChatViewModel {
                 return
             }
         } else if localRecord == nil {
-            guard let key = APIKeyStore.loadAPIKey(), !key.isEmpty else {
-                memoryBackfillStatus = "Add your Eaon API key first, or switch to a model that already has one."
+            guard let access = AquaAccess.current else {
+                memoryBackfillStatus = "Add your Eaon API key (or start your free week) first, or switch to a model that already has one."
                 return
             }
-            aquaApiKey = key
+            aquaApiKey = access.apiKey
         }
 
         guard !conversations.isEmpty else {
@@ -2957,10 +2963,12 @@ class ChatViewModel {
         // passes an explicit value (empty) to drop them, see below.
         samplingOverride: SamplingParameters? = nil
     ) async throws {
-        var request = URLRequest(url: AquaAPI.chatCompletionsURL)
+        // Free-week trials route to Eaon's own gateway; a user key goes to
+        // the Aqua API as always. Authorization is attached AFTER the body
+        // below — trial signatures cover the exact request bytes.
+        var request = URLRequest(url: AquaAccess.baseURL(forKey: apiKey).appendingPathComponent("chat/completions"))
         request.httpMethod = "POST"
         request.timeoutInterval = 120
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var apiMessages: [[String: Any]] = systemPromptHistory(for: conversationId, modelId: modelId).map(\.openAICompatibleJSON)
@@ -2980,6 +2988,7 @@ class ChatViewModel {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        AquaAccess.authorize(&request, apiKey: apiKey)
 
         let (bytes, httpResponse) = try await TransientHTTPRetry.send(request)
 
