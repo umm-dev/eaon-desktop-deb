@@ -3,6 +3,14 @@
 All notable changes to Eaon are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/) — newest release on top.
 
+## [2026.3.1] — 2026-07-19
+
+### Added
+- One-click Eaon CLI install (Settings → General → Eaon CLI) — a
+  ready-to-run copy now ships inside the Mac app; Install copies it to
+  `~/.eaon/cli-app` and links a global `eaon` command, no npm or
+  network needed.
+
 ## [2026.3.0] — 2026-07-18
 
 ### Added
