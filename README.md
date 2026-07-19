@@ -49,6 +49,12 @@ swift build
 To produce a distributable universal build (arm64 + x86_64), see
 `build-installer.sh` and `RELEASING-UPDATES.md`.
 
+## Contributers
+
+Sanscreates,
+Mincoffical, and
+Tanzim
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how
