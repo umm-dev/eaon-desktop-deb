@@ -45,6 +45,11 @@ struct RootView: View {
     /// One-shot, first-launch-only — never re-shown automatically and never
     /// blocks anything; see `OnboardingView`'s own doc.
     @AppStorage("eaon_has_seen_onboarding") private var hasSeenOnboarding = false
+    /// One-shot, ever — see `FreeWeekTrialPopup`'s doc. Set alongside
+    /// `hasSeenOnboarding` for anyone who just went through onboarding, so
+    /// this only actually fires for pre-existing installs.
+    @AppStorage("eaon_has_seen_trial_popup") private var hasSeenTrialPopup = false
+    @State private var showingTrialPopup = false
     @State private var showingSearchPalette = false
     @State private var conversationPendingDeletion: Conversation?
     @State private var conversationPendingRename: Conversation?
@@ -79,6 +84,19 @@ struct RootView: View {
     private var isInSettings: Bool {
         if case .settings = selection { return true }
         return false
+    }
+
+    /// Only for installs that already finished onboarding before this popup
+    /// existed (or where onboarding otherwise already handled the offer —
+    /// see the `hasSeenTrialPopup` writes alongside every onboarding exit):
+    /// no user key saved, and no trial ever started on this device —
+    /// matches the exact guard `AquaProviderSettingsView`'s Free Week card
+    /// uses to decide it has something to say.
+    private var isEligibleForTrialPopup: Bool {
+        hasSeenOnboarding
+            && !hasSeenTrialPopup
+            && !APIKeyStore.hasAPIKey
+            && TrialStore.shared.credential == nil
     }
 
     var body: some View {
@@ -260,20 +278,41 @@ struct RootView: View {
                     onOpenModels: {
                         selection = .feature(.models)
                         hasSeenOnboarding = true
+                        hasSeenTrialPopup = true
                     },
                     onOpenProviderSettings: {
                         selection = .settings("aqua")
                         hasSeenOnboarding = true
+                        hasSeenTrialPopup = true
                     },
-                    onFinish: { hasSeenOnboarding = true },
+                    onFinish: {
+                        hasSeenOnboarding = true
+                        hasSeenTrialPopup = true
+                    },
                     onTrialStarted: {
                         hasSeenOnboarding = true
+                        hasSeenTrialPopup = true
                         // Refetch through the trial gateway so the picker
                         // shows exactly the models the free week can run.
                         Task { await chatViewModel.fetchModels() }
                     }
                 )
                 .zIndex(30)
+            }
+
+            if showingTrialPopup {
+                FreeWeekTrialPopup(
+                    onStarted: {
+                        hasSeenTrialPopup = true
+                        showingTrialPopup = false
+                        Task { await chatViewModel.fetchModels() }
+                    },
+                    onDismiss: {
+                        hasSeenTrialPopup = true
+                        showingTrialPopup = false
+                    }
+                )
+                .zIndex(25)
             }
 
             if updateChecker.available != nil || cliUpdateStore.available != nil {
@@ -316,6 +355,14 @@ struct RootView: View {
             guard !didInitialModeSync else { return }
             didInitialModeSync = true
             selection = .mode(chatViewModel.currentMode)
+            if isEligibleForTrialPopup {
+                // A short delay so this doesn't compete with the window's
+                // own opening animation — it should feel like a beat after
+                // launch, not part of it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    if isEligibleForTrialPopup { showingTrialPopup = true }
+                }
+            }
         }
         // Settings pins the sidebar open (see `isInSettings`). If it's
         // reached while the sidebar is already collapsed — e.g. from ⌘K or a

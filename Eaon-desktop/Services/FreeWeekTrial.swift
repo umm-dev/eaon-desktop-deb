@@ -31,6 +31,49 @@ enum FreeWeekTrial {
     static func isTrialKey(_ apiKey: String) -> Bool {
         apiKey.hasPrefix(keyPrefix)
     }
+
+    /// Live snapshot of the "first 100" launch gift — claimed/remaining
+    /// count and the fixed redemption deadline. Public and unauthenticated
+    /// on the gateway side: there's no credential to check before someone
+    /// has even decided whether to redeem.
+    struct GiftStatus {
+        let claimed: Int
+        let total: Int
+        let remaining: Int
+        let expiresAt: Date
+        let available: Bool
+        let supportEmail: String
+    }
+
+    /// Returns nil on any network or parse failure — callers treat that the
+    /// same as "status unknown yet," never as "offer closed" (a Settings
+    /// card that can't reach the gateway shouldn't claim the gift is gone).
+    static func fetchGiftStatus() async -> GiftStatus? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("trial/gift"))
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await AppHTTP.session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let payload = json["data"] as? [String: Any],
+              let claimed = payload["claimed"] as? Int,
+              let total = payload["total"] as? Int,
+              let remaining = payload["remaining"] as? Int,
+              let expiresRaw = payload["expires_at"] as? String,
+              let expiresAt = ISO8601DateFormatter.trialParser.date(from: expiresRaw),
+              let available = payload["available"] as? Bool,
+              let supportEmail = payload["support_email"] as? String
+        else {
+            return nil
+        }
+        return GiftStatus(
+            claimed: claimed,
+            total: total,
+            remaining: remaining,
+            expiresAt: expiresAt,
+            available: available,
+            supportEmail: supportEmail
+        )
+    }
 }
 
 /// One minted credential, persisted in UserDefaults (deliberately — see

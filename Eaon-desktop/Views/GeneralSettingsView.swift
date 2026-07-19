@@ -11,6 +11,7 @@ struct GeneralSettingsView: View {
 
     @State private var showingCLISheet = false
     @State private var cliStatus: EaonCLILauncher.Status?
+    @State private var giftStatus: FreeWeekTrial.GiftStatus?
 
     // The dev build is a bare executable with no Info.plist, so the bundle
     // never has a version — `AppVersion.current` is the source of truth.
@@ -31,6 +32,7 @@ struct GeneralSettingsView: View {
                     assistantCard
                     cliCard
                     dataFolderCard
+                    giftsCard
                     aboutCard
                 }
                 .padding(.horizontal, 32)
@@ -44,6 +46,9 @@ struct GeneralSettingsView: View {
         }
         .task {
             cliStatus = await Task.detached { EaonCLILauncher.status() }.value
+        }
+        .task {
+            giftStatus = await FreeWeekTrial.fetchGiftStatus()
         }
     }
 
@@ -184,6 +189,133 @@ struct GeneralSettingsView: View {
             .padding(.bottom, 14)
         }
     }
+
+    // MARK: - Gifts
+
+    /// Today this is one gift — the Free Week — but framed as its own
+    /// section (rather than folded into "About") so it reads as a stable,
+    /// always-there place to check "what can I redeem," the way the
+    /// Providers page's `freeWeekCard` (a contextual nudge that hides once
+    /// there's nothing to offer) deliberately isn't.
+    private var giftsCard: some View {
+        SettingsSectionCard(title: "Gifts") {
+            VStack(alignment: .leading, spacing: 0) {
+                freeWeekGiftRow
+            }
+            .padding(.bottom, 14)
+        }
+    }
+
+    @ViewBuilder
+    private var freeWeekGiftRow: some View {
+        let trial = TrialStore.shared
+        let hasUserKey = APIKeyStore.hasAPIKey
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "gift.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppearanceSettings.shared.accentColor)
+                Text("Free Week")
+                    .font(AppFont.mono(14, weight: .semibold))
+                    .foregroundColor(colors.textPrimary)
+                Spacer()
+                giftBadge(trial: trial, hasUserKey: hasUserKey)
+            }
+
+            Text(giftDescription(trial: trial, hasUserKey: hasUserKey))
+                .font(AppFont.sans(12))
+                .foregroundColor(colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Only the "never redeemed, no key of your own" state has
+            // anything actionable to show — every other state is purely
+            // informational (see giftDescription).
+            if trial.credential == nil, !hasUserKey {
+                if let giftStatus, !giftStatus.available {
+                    Text("Email \(giftStatus.supportEmail) with the subject \u{201c}extra usage\u{201d} if you need access.")
+                        .font(AppFont.sans(11.5))
+                        .foregroundColor(colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(spacing: 10) {
+                        pillButton(title: trial.isStarting ? "Starting…" : "Redeem", icon: "gift", isLoading: trial.isStarting) {
+                            guard !trial.isStarting else { return }
+                            Task {
+                                await trial.start()
+                                if trial.isActive {
+                                    giftStatus = await FreeWeekTrial.fetchGiftStatus()
+                                }
+                            }
+                        }
+                        .disabled(trial.isStarting)
+
+                        if let giftStatus {
+                            Text("\(giftStatus.remaining) of \(giftStatus.total) left · through \(Self.giftExpiryFormatter.string(from: giftStatus.expiresAt))")
+                                .font(AppFont.sans(11))
+                                .foregroundColor(colors.textTertiary)
+                        }
+                    }
+
+                    if let error = trial.lastError {
+                        Text(error)
+                            .font(AppFont.sans(11.5))
+                            .foregroundColor(colors.destructive)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.top, 14)
+    }
+
+    @ViewBuilder
+    private func giftBadge(trial: TrialStore, hasUserKey: Bool) -> some View {
+        if trial.isActive {
+            badgePill("\(trial.daysLeft) day\(trial.daysLeft == 1 ? "" : "s") left", color: Color(hex: "#34C759"))
+        } else if trial.isExpired {
+            badgePill("Claimed", color: colors.textTertiary)
+        } else if hasUserKey {
+            badgePill("Not needed", color: colors.textTertiary)
+        } else if let giftStatus, !giftStatus.available {
+            badgePill("Closed", color: colors.textTertiary)
+        }
+    }
+
+    private func badgePill(_ title: String, color: Color) -> some View {
+        Text(title)
+            .font(AppFont.mono(10.5, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.14)))
+    }
+
+    private func giftDescription(trial: TrialStore, hasUserKey: Bool) -> String {
+        if trial.isActive {
+            if hasUserKey {
+                return "Your own API key is saved, so it's being used instead of the trial."
+            }
+            return "Hosted models are on the house through \(trial.credential.map { Self.giftExpiryFormatter.string(from: $0.expiresAt) } ?? "the end of the week")."
+        }
+        if trial.isExpired {
+            return "Your free week has ended. Add your own Eaon API key in Providers to keep going."
+        }
+        if hasUserKey {
+            return "You're using your own API key, so there's nothing to redeem right now."
+        }
+        if let giftStatus, !giftStatus.available {
+            return "The first \(giftStatus.total) free weeks have all been claimed, or the offer window has closed."
+        }
+        return "7 days of every hosted model, free — one click, no account, no card. Limited to the first \(giftStatus?.total ?? 100) people to redeem, through \(giftStatus.map { Self.giftExpiryFormatter.string(from: $0.expiresAt) } ?? "the offer's deadline")."
+    }
+
+    private static let giftExpiryFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
 
     // MARK: - About & Support
 
