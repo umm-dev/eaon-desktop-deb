@@ -56,10 +56,13 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
+            libdbus-1-dev \
+            libxdo-dev \
             librsvg2-dev \
             patchelf \
             build-essential \
-            file
+            file \
+            pkg-config
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -81,6 +84,13 @@ jobs:
       - name: Install frontend dependencies
         working-directory: eaon-tauri
         run: npm ci
+
+      - name: Verify Linux source
+        if: matrix.platform == 'ubuntu-22.04'
+        working-directory: eaon-tauri
+        run: |
+          npm run check
+          cargo test --manifest-path src-tauri/Cargo.toml
 
       # On a tag push, stamp the app version from the tag (v2026.2.0 ->
       # 2026.2.0) so the installer's version matches the release, then let
