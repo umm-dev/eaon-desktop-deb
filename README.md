@@ -86,9 +86,7 @@ WebKitGTK/Tauri dependencies and creates an installable `.deb` package.
 
 ## Contributors
 
-Sanscreates,
-Mincoffical, and
-Tanzim
+Sanscreates, Mincoffical, and Tanzim
 
 ## Contributing
 
