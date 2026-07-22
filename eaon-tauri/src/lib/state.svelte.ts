@@ -1254,12 +1254,15 @@ class AppState {
     perModel: { prompts: number; chars: number },
     history: api.WireMessage[]
   ): Promise<ChatMessage> {
-    const assistant: ChatMessage = {
+    let assistant: ChatMessage = {
       id: uid(), role: "assistant", content: "", reasoning: "",
       modelId: model.key, modelDisplay: model.display,
       timestamp: Date.now(), generationStartTime: Date.now(),
     };
     conversation.messages.push(assistant);
+    // As with a new conversation, continue through Svelte's tracked proxy.
+    // Streaming and fallback completion both mutate this message in place.
+    assistant = conversation.messages[conversation.messages.length - 1];
 
     const requestId = requestCounter++;
     const session = this.sessions[conversationId];
