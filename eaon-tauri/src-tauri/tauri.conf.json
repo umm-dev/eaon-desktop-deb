@@ -27,6 +27,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Sanscreates",
+    "homepage": "https://eaon.dev",
+    "copyright": "Copyright (C) 2026 Sanscreates and contributors",
+    "license": "GPL-3.0-only",
+    "licenseFile": "../../LICENSE.md",
+    "category": "Utility",
+    "shortDescription": "Private AI chat client with local and cloud models",
+    "longDescription": "Eaon is a private AI chat client that supports hosted, bring-your-own-key, and local models, including Ollama and llama.cpp. It includes projects, memory, attachments, image generation, web search, MCP plugins, a local OpenAI-compatible API server, and an opt-in coding agent.",
+    "linux": {
+      "deb": {
+        "files": {
+          "usr/share/doc/eaon/copyright": "../../LICENSE.md"
+        },
+        "section": "utils",
+        "priority": "optional"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

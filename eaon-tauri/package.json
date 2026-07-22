@@ -1,7 +1,7 @@
 {
-  "name": "eaon-tauri",
+  "name": "eaon-desktop",
   "version": "0.1.0",
-  "description": "",
+  "description": "Eaon desktop AI chat client for Debian and other Linux desktops",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -9,9 +9,10 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "package:deb": "tauri build --bundles deb",
     "tauri": "tauri"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "dependencies": {
     "@lucide/svelte": "^1.24.0",
     "@tauri-apps/api": "^2",
