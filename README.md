@@ -1,9 +1,14 @@
 # Eaon
 
-A native macOS chat client, built with SwiftUI. Talk to [Eaon](https://eaon.dev)'s
-hosted models, bring your own API key for any OpenAI-compatible/Anthropic/Gemini
-provider, or run models entirely on-device with Ollama, llama.cpp, or MLX —
-all from the same app, with no account required for the local-only path.
+Eaon is a desktop chat client for macOS and Debian-based Linux. Talk to
+[Eaon](https://eaon.dev)'s hosted models, bring your own API key for any
+OpenAI-compatible/Anthropic/Gemini provider, or run models entirely on-device
+with Ollama, llama.cpp, or MLX — all from the same app, with no account
+required for the local-only path.
+
+The original SwiftUI app is retained for macOS. The `eaon-tauri` app provides
+the matching cross-platform interface and feature set for Debian and other
+Linux distributions supported by Tauri.
 
 ## Highlights
 
@@ -27,17 +32,41 @@ all from the same app, with no account required for the local-only path.
 
 ## Quick start
 
-Clone the repository, then run the development launcher:
+Clone this Debian/Linux fork:
 
 ```sh
-git clone https://github.com/sanscreates/eaon-desktop.git
-cd eaon-desktop
+git clone https://github.com/umm-dev/eaon-desktop-deb.git
+cd eaon-desktop-deb
+```
+
+### Debian and Ubuntu
+
+Build and install the Linux desktop app from `eaon-tauri`:
+
+```sh
+cd eaon-tauri
+npm ci
+npm run package:deb
+sudo apt install ./src-tauri/target/release/bundle/deb/Eaon_*.deb
+eaon
+```
+
+See [the Debian build guide](eaon-tauri/DEBIAN.md) for the required system
+dependencies, validation commands, removal, and release-artifact details.
+
+### macOS
+
+Run the native development launcher:
+
+```sh
 ./run.sh
 ```
 
 The launcher builds Eaon and starts it as a detached macOS app process.
 
 ## Building
+
+### macOS
 
 Requires Xcode 15+ / Swift 5.9+ and macOS 14+.
 
@@ -48,6 +77,12 @@ swift build
 
 To produce a distributable universal build (arm64 + x86_64), see
 `build-installer.sh` and `RELEASING-UPDATES.md`.
+
+### Debian and Ubuntu
+
+The packaged Linux app is built from `eaon-tauri`. Follow
+[the Debian build guide](eaon-tauri/DEBIAN.md), which covers the required
+WebKitGTK/Tauri dependencies and creates an installable `.deb` package.
 
 ## Contributers
 
@@ -61,12 +96,19 @@ Tanzim
 account, no CLA to sign, no external dependencies to wrangle:
 
 ```sh
-git clone https://github.com/sanscreates/eaon-desktop
-cd eaon-desktop
-swift build && ./run.sh
+git clone https://github.com/umm-dev/eaon-desktop-deb.git
+cd eaon-desktop-deb
 ```
 
-That's the whole setup. Open an issue, pick up a
+For macOS development, run `swift build && ./run.sh`. For Debian and Ubuntu,
+follow [the Linux build guide](eaon-tauri/DEBIAN.md).
+
+Repository integration policy:
+
+- Merge changes that are ready and validated into `main`.
+- Merge work that needs further integration or testing into `beta` first.
+
+Open an issue, pick up a
 [`good first issue`](https://github.com/sanscreates/eaon-desktop/labels/good%20first%20issue),
 or just send a PR — see [CONTRIBUTING.md](CONTRIBUTING.md) for the (short)
 details and the one-line sign-off we use instead of a contributor agreement.
