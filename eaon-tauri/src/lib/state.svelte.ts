@@ -1058,6 +1058,11 @@ class AppState {
       this.pendingProjectId = null;
       this.conversations.push(conversation);
       this.currentId = conversation.id;
+      // `conversation` is the plain object just inserted into Svelte's
+      // reactive array. Continue with its state-tracked proxy so the first
+      // user turn, assistant placeholder, and streamed tokens immediately
+      // drive ChatHome out of its empty state and render as they arrive.
+      conversation = this.current!;
     }
     const conversationId = conversation.id;
 
