@@ -1,30 +1,33 @@
 # Contributing to Eaon
 
 Thanks for considering it — contributing here is meant to be easy. There's
-**no CLA to sign**, **no external dependencies to install**, and **no
-build tooling beyond Swift itself**. Clone, build, run, send a PR.
+**no CLA to sign**. Clone, install the platform dependencies, build, run, and
+send a PR.
 
 New here? Look for issues labelled
-[`good first issue`](https://github.com/sanscreates/eaon-desktop/labels/good%20first%20issue),
+[good first issue](https://github.com/umm-dev/eaon-desktop-deb/labels/good%20first%20issue),
 or just open an issue describing what you'd like to work on.
 
 ## Getting set up
 
 ```sh
-git clone https://github.com/sanscreates/eaon-desktop
-cd eaon-desktop
+git clone https://github.com/umm-dev/eaon-desktop-deb
+cd eaon-desktop-deb
 swift build
 ./run.sh
 ```
 
-No external dependencies (see `Package.swift`) — this is deliberate. New
-functionality (an HTTP client, a parser, a small protocol implementation)
-gets hand-rolled rather than pulling in a package, so keep that pattern
-unless there's a strong reason not to.
+The macOS target keeps dependencies minimal (see `Package.swift`). The
+Linux/Tauri target has its own system and Node/Rust dependencies; see
+[`eaon-tauri/DEBIAN.md`](eaon-tauri/DEBIAN.md) for the Linux setup. New
+functionality should follow the existing patterns unless there's a strong
+reason to introduce a dependency.
 
 ## Before opening a PR
 
-- **Build for real.** `swift build` — don't assume a change compiles.
+- **Build for real.** Run `swift build` on macOS, or the relevant checks in
+  [`eaon-tauri/DEBIAN.md`](eaon-tauri/DEBIAN.md) on Linux — don't assume a
+  change compiles.
 - **Test the actual behavior**, not just that it builds. If you're touching
   a network call, a parser, or anything with a real external API, verify it
   against the real thing where practical rather than only reasoning about
@@ -42,8 +45,8 @@ unless there's a strong reason not to.
 
 ## Reporting issues
 
-Open a GitHub issue with what you expected, what happened, and macOS/Swift
-version if it's build-related. For anything security-sensitive, please
+Open a GitHub issue with what you expected, what happened, and the relevant
+OS, toolchain, and app version if it's build-related. For anything security-sensitive, please
 don't open a public issue — reach out privately first.
 
 ## License & sign-off
