@@ -84,7 +84,7 @@ The packaged Linux app is built from `eaon-tauri`. Follow
 [the Debian build guide](eaon-tauri/DEBIAN.md), which covers the required
 WebKitGTK/Tauri dependencies and creates an installable `.deb` package.
 
-## Contributers
+## Contributors
 
 Sanscreates,
 Mincoffical, and
@@ -109,7 +109,7 @@ Repository integration policy:
 - Merge work that needs further integration or testing into `beta` first.
 
 Open an issue, pick up a
-[`good first issue`](https://github.com/sanscreates/eaon-desktop/labels/good%20first%20issue),
+[`good first issue`](https://github.com/umm-dev/eaon-desktop-deb/labels/good%20first%20issue),
 or just send a PR — see [CONTRIBUTING.md](CONTRIBUTING.md) for the (short)
 details and the one-line sign-off we use instead of a contributor agreement.
 
