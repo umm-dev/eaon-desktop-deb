@@ -1284,6 +1284,23 @@ class AppState {
           }
         },
       });
+      // Some OpenAI-compatible gateways acknowledge an SSE request but
+      // complete it without forwarding any token frames. Do not leave a
+      // blank assistant bubble in that case: retry once as a regular
+      // completion using the same conversation history.
+      if (!assistant.isError && !assistant.content && !assistant.reasoning) {
+        const fallbackMessages = history.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : message.content
+                .map((part) => part.type === "text" ? part.text : "[Attached image]")
+                .join("\n"),
+        }));
+        assistant.content = await api.chatComplete({
+          baseUrl, apiKey, model: model.requestId, messages: fallbackMessages,
+        });
+      }
     } catch (e) {
       if (!assistant.isError) {
         assistant.isError = true;
