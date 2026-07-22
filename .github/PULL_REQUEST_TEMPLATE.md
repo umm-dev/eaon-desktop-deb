@@ -11,7 +11,9 @@
 
 ## Checklist
 
-- [ ] `swift build` passes
-- [ ] I ran the app and exercised the change (not just compiled it)
+- [ ] The relevant build passes (`swift build` on macOS, or the Linux checks
+  in `eaon-tauri/DEBIAN.md`)
+- [ ] I ran the relevant app target and exercised the change (not just
+  compiled it)
 - [ ] Commits are signed off (`git commit -s`) — see CONTRIBUTING.md
 - [ ] PR is focused (no unrelated drive-by refactors)
