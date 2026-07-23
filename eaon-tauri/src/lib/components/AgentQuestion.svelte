@@ -11,8 +11,13 @@
   function answer(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    const question = app.pendingAgentQuestion;
+    if (!question) return;
     custom = "";
-    app.pendingAgentQuestion?.resolve(trimmed);
+    // Dismiss first. The resumed Agent loop may immediately open another
+    // dialog or start streaming; leaving this overlay mounted blocks both.
+    app.pendingAgentQuestion = null;
+    question.resolve(trimmed);
   }
 </script>
 
