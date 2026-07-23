@@ -26,7 +26,9 @@
   }
 
   function keySubmit(event: KeyboardEvent) {
-    if (event.key !== "Enter") return;
+    const enter = event.key === "Enter" || event.key === "Return"
+      || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+    if (!enter) return;
     event.preventDefault();
     answer(custom);
   }
@@ -52,6 +54,7 @@
           bind:value={custom}
           placeholder="Or type your own answer…"
           onkeydown={keySubmit}
+          onkeyup={keySubmit}
         />
         <button
           class="send"
