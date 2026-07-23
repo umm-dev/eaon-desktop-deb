@@ -3,10 +3,12 @@
   // the model's question, one button per offered option, and a free-text
   // field so the user can always answer in their own words instead.
   import { app } from "$lib/state.svelte";
+  import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
 
   const pending = $derived(app.pendingAgentQuestion);
   let custom = $state("");
+  let customInput = $state<HTMLInputElement | null>(null);
 
   function answer(text: string) {
     const trimmed = text.trim();
@@ -32,6 +34,21 @@
     event.preventDefault();
     answer(custom);
   }
+
+  onMount(() => {
+    const captureEnter = (event: KeyboardEvent) => {
+      if (document.activeElement !== customInput) return;
+      const enter = event.key === "Enter" || event.key === "Return"
+        || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+      if (!enter) return;
+      console.info("[AgentQuestion] captured Enter", { answerLength: custom.length });
+      event.preventDefault();
+      event.stopPropagation();
+      answer(custom);
+    };
+    window.addEventListener("keydown", captureEnter, true);
+    return () => window.removeEventListener("keydown", captureEnter, true);
+  });
 </script>
 
 {#if pending}
@@ -51,6 +68,7 @@
       {/if}
       <form class="custom" onsubmit={submitCustom}>
         <input
+          bind:this={customInput}
           bind:value={custom}
           placeholder="Or type your own answer…"
           onkeydown={keySubmit}
