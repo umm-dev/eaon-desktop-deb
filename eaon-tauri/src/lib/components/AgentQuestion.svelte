@@ -14,6 +14,11 @@
     custom = "";
     app.answerAgentQuestion(trimmed);
   }
+
+  function submitCustom(event: SubmitEvent) {
+    event.preventDefault();
+    answer(custom);
+  }
 </script>
 
 {#if pending}
@@ -31,14 +36,13 @@
           {/each}
         </div>
       {/if}
-      <div class="custom">
+      <form class="custom" onsubmit={submitCustom}>
         <input
           bind:value={custom}
           placeholder="Or type your own answer…"
-          onkeydown={(e) => { if (e.key === "Enter") answer(custom); }}
         />
-        <button class="send" disabled={!custom.trim()} onclick={() => answer(custom)}>Answer</button>
-      </div>
+        <button class="send" type="submit" disabled={!custom.trim()}>Answer</button>
+      </form>
     </div>
   </div>
 {/if}
