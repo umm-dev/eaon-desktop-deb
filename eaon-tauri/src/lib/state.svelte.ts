@@ -1355,6 +1355,7 @@ class AppState {
             continue;
           }
           const answer = await this.askAgentQuestion(question, options);
+          void api.traceUiEvent(`agent-question resumed length=${answer.length}`);
           sections.push(`### ask_user\nThe user answered: ${answer}`);
           continue;
         }
@@ -1428,6 +1429,7 @@ class AppState {
   /** Resolve the visible Agent question before its loop continues. */
   answerAgentQuestion(answer: string): void {
     const pending = this.pendingAgentQuestion;
+    void api.traceUiEvent(`agent-question state pending=${Boolean(pending)} length=${answer.length}`);
     if (!pending) return;
     this.pendingAgentQuestion = null;
     pending.resolve(answer);

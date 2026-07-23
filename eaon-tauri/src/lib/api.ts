@@ -49,6 +49,10 @@ export function cancelStream(requestId: number): Promise<void> {
   return invoke("cancel_stream", { requestId });
 }
 
+export function traceUiEvent(message: string): Promise<void> {
+  return invoke("trace_ui_event", { message });
+}
+
 /** A non-streaming completion — the whole answer as one string. Background
  *  work (memory extraction), not live chat. */
 export function chatComplete(args: {

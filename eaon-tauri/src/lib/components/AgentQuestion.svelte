@@ -3,6 +3,7 @@
   // the model's question, one button per offered option, and a free-text
   // field so the user can always answer in their own words instead.
   import { app } from "$lib/state.svelte";
+  import * as api from "$lib/api";
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
 
@@ -13,6 +14,7 @@
   function answer(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    void api.traceUiEvent(`agent-question answer length=${trimmed.length}`);
     custom = "";
     app.answerAgentQuestion(trimmed);
   }
@@ -41,7 +43,7 @@
       const enter = event.key === "Enter" || event.key === "Return"
         || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
       if (!enter) return;
-      console.info("[AgentQuestion] captured Enter", { answerLength: custom.length });
+      void api.traceUiEvent(`agent-question capture key=${event.key} code=${event.code} length=${custom.length}`);
       event.preventDefault();
       event.stopPropagation();
       answer(custom);
