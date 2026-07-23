@@ -24,6 +24,12 @@
     event.preventDefault();
     answer(custom);
   }
+
+  function keySubmit(event: KeyboardEvent) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    answer(custom);
+  }
 </script>
 
 {#if pending}
@@ -45,6 +51,7 @@
         <input
           bind:value={custom}
           placeholder="Or type your own answer…"
+          onkeydown={keySubmit}
         />
         <button
           class="send"
