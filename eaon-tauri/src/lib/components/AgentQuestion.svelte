@@ -3,20 +3,59 @@
   // the model's question, one button per offered option, and a free-text
   // field so the user can always answer in their own words instead.
   import { app } from "$lib/state.svelte";
+  import * as api from "$lib/api";
+  import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
 
-  const pending = $derived(app.pendingAgentQuestion);
   let custom = $state("");
+  let customInput = $state<HTMLInputElement | null>(null);
+  let capturedEnterAnswer: string | null = null;
 
   function answer(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    void api.traceUiEvent(`agent-question answer length=${trimmed.length}`);
     custom = "";
-    app.pendingAgentQuestion?.resolve(trimmed);
+    app.answerAgentQuestion(trimmed);
   }
+
+  onMount(() => {
+    const isEnter = (event: KeyboardEvent) =>
+      event.key === "Enter" || event.key === "Return"
+      || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+
+    const captureKeydown = (event: KeyboardEvent) => {
+      if (!isEnter(event) || !app.pendingAgentQuestion || !custom.trim()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) capturedEnterAnswer = custom;
+    };
+
+    const captureKeyup = (event: KeyboardEvent) => {
+      const enter = event.key === "Enter" || event.key === "Return"
+        || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+      if (!enter || !app.pendingAgentQuestion || !capturedEnterAnswer) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const captured = capturedEnterAnswer;
+      capturedEnterAnswer = null;
+      // Match the working button path: move focus away from the text editor,
+      // let WebKitGTK finish its native IME/key handling, then remove the
+      // modal and continue the Agent request.
+      customInput?.blur();
+      setTimeout(() => answer(captured), 250);
+    };
+    window.addEventListener("keydown", captureKeydown, true);
+    window.addEventListener("keyup", captureKeyup, true);
+    return () => {
+      window.removeEventListener("keydown", captureKeydown, true);
+      window.removeEventListener("keyup", captureKeyup, true);
+    };
+  });
 </script>
 
-{#if pending}
+{#if app.pendingAgentQuestion}
+  {@const pending = app.pendingAgentQuestion}
   <div class="overlay">
     <div class="card">
       <div class="title">
@@ -33,11 +72,16 @@
       {/if}
       <div class="custom">
         <input
+          bind:this={customInput}
           bind:value={custom}
           placeholder="Or type your own answer…"
-          onkeydown={(e) => { if (e.key === "Enter") answer(custom); }}
         />
-        <button class="send" disabled={!custom.trim()} onclick={() => answer(custom)}>Answer</button>
+        <button
+          class="send"
+          type="button"
+          disabled={!custom.trim()}
+          onclick={() => answer(custom)}
+        >Answer</button>
       </div>
     </div>
   </div>

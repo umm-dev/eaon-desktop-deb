@@ -1269,6 +1269,7 @@ class AppState {
     if (session) session.requestId = requestId; // so stopGeneration cancels this step
 
     const { baseUrl, apiKey } = this.endpointFor(model);
+    void api.traceUiEvent(`stream step start request=${requestId} history=${history.length}`);
     try {
       await api.chatStream({
         baseUrl, apiKey, model: model.requestId, messages: history, requestId,
@@ -1292,6 +1293,7 @@ class AppState {
       // blank assistant bubble in that case: retry once as a regular
       // completion using the same conversation history.
       if (!assistant.isError && !assistant.content && !assistant.reasoning) {
+        void api.traceUiEvent(`stream step fallback request=${requestId}`);
         const fallbackMessages = history.map((message) => ({
           role: message.role,
           content: typeof message.content === "string"
@@ -1313,6 +1315,9 @@ class AppState {
     } finally {
       assistant.generationEndTime = Date.now();
       assistant.generatedTokenCount = Math.max(1, Math.ceil(assistant.content.length / 4));
+      void api.traceUiEvent(
+        `stream step end request=${requestId} chars=${assistant.content.length} error=${Boolean(assistant.isError)}`
+      );
     }
     return assistant;
   }
@@ -1355,6 +1360,7 @@ class AppState {
             continue;
           }
           const answer = await this.askAgentQuestion(question, options);
+          void api.traceUiEvent(`agent-question resumed length=${answer.length}`);
           sections.push(`### ask_user\nThe user answered: ${answer}`);
           continue;
         }
@@ -1386,11 +1392,13 @@ class AppState {
 
       if (this.sessions[conversationId]?.stopped) break;
       const resultsText = `[Tool results — automated, not written by the user]\n\n${sections.join("\n\n")}`;
+      void api.traceUiEvent(`agent tools complete sections=${sections.length}`);
       conversation.messages.push({
         id: uid(), role: "user", content: resultsText, reasoning: "",
         timestamp: Date.now(), isToolResult: true,
       });
       history.push({ role: "user", content: resultsText });
+      void api.traceUiEvent(`agent tool result appended step=${step}`);
       this.saveSoon();
     }
   }
@@ -1423,6 +1431,15 @@ class AppState {
         },
       };
     });
+  }
+
+  /** Resolve the visible Agent question before its loop continues. */
+  answerAgentQuestion(answer: string): void {
+    const pending = this.pendingAgentQuestion;
+    void api.traceUiEvent(`agent-question state pending=${Boolean(pending)} length=${answer.length}`);
+    if (!pending) return;
+    this.pendingAgentQuestion = null;
+    pending.resolve(answer);
   }
 
   respondToToolConfirm(decision: "once" | "always" | "deny"): void {

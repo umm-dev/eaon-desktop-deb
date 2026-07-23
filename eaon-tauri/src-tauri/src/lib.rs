@@ -56,6 +56,11 @@ fn set_proxy(url: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn trace_ui_event(message: String) {
+    eprintln!("[eaon-ui] {message}");
+}
+
 /// A reqwest client honoring the configured proxy. `timeout_secs: None`
 /// leaves streaming responses unbounded (a chat stream can legitimately run
 /// minutes); requests with a natural bound pass one.
@@ -930,6 +935,7 @@ pub fn run() {
             fetch_text_url,
             scan_claude_skills,
             set_proxy,
+            trace_ui_event,
             web_search,
             generate_image,
             save_attachment,
