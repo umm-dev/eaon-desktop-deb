@@ -8,6 +8,8 @@
   import Icon from "./Icon.svelte";
 
   let custom = $state("");
+  let customInput = $state<HTMLInputElement | null>(null);
+  let capturedEnterAnswer: string | null = null;
 
   function answer(text: string) {
     const trimmed = text.trim();
@@ -18,21 +20,37 @@
   }
 
   onMount(() => {
-    const captureEnter = (event: KeyboardEvent) => {
-      const enter = event.key === "Enter" || event.key === "Return"
-        || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
-      if (!enter || !app.pendingAgentQuestion || !custom.trim()) return;
-      void api.traceUiEvent(`agent-question capture key=${event.key} code=${event.code} length=${custom.length}`);
-      const captured = custom;
+    const isEnter = (event: KeyboardEvent) =>
+      event.key === "Enter" || event.key === "Return"
+      || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+
+    const captureKeydown = (event: KeyboardEvent) => {
+      if (!isEnter(event) || !app.pendingAgentQuestion || !custom.trim()) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      // Do not remove the focused input while WebKitGTK is still dispatching
-      // its keydown event. Pointer submission runs at the target and is safe;
-      // capture-phase Enter must resolve on the next event-loop turn.
-      setTimeout(() => answer(captured), 0);
+      if (!event.repeat) capturedEnterAnswer = custom;
     };
-    window.addEventListener("keydown", captureEnter, true);
-    return () => window.removeEventListener("keydown", captureEnter, true);
+
+    const captureKeyup = (event: KeyboardEvent) => {
+      const enter = event.key === "Enter" || event.key === "Return"
+        || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+      if (!enter || !app.pendingAgentQuestion || !capturedEnterAnswer) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const captured = capturedEnterAnswer;
+      capturedEnterAnswer = null;
+      // Match the working button path: move focus away from the text editor,
+      // let WebKitGTK finish its native IME/key handling, then remove the
+      // modal and continue the Agent request.
+      customInput?.blur();
+      setTimeout(() => answer(captured), 250);
+    };
+    window.addEventListener("keydown", captureKeydown, true);
+    window.addEventListener("keyup", captureKeyup, true);
+    return () => {
+      window.removeEventListener("keydown", captureKeydown, true);
+      window.removeEventListener("keyup", captureKeyup, true);
+    };
   });
 </script>
 
@@ -54,6 +72,7 @@
       {/if}
       <div class="custom">
         <input
+          bind:this={customInput}
           bind:value={custom}
           placeholder="Or type your own answer…"
         />
