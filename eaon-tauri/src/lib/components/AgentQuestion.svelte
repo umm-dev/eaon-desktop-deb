@@ -17,33 +17,19 @@
     app.answerAgentQuestion(trimmed);
   }
 
-  function submitCustom(event: SubmitEvent) {
-    event.preventDefault();
-    answer(custom);
-  }
-
-  function pointerSubmit(event: PointerEvent) {
-    event.preventDefault();
-    answer(custom);
-  }
-
-  function keySubmit(event: KeyboardEvent) {
-    const enter = event.key === "Enter" || event.key === "Return"
-      || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
-    if (!enter) return;
-    event.preventDefault();
-    answer(custom);
-  }
-
   onMount(() => {
     const captureEnter = (event: KeyboardEvent) => {
       const enter = event.key === "Enter" || event.key === "Return"
         || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
       if (!enter || !app.pendingAgentQuestion || !custom.trim()) return;
       void api.traceUiEvent(`agent-question capture key=${event.key} code=${event.code} length=${custom.length}`);
+      const captured = custom;
       event.preventDefault();
-      event.stopPropagation();
-      answer(custom);
+      event.stopImmediatePropagation();
+      // Do not remove the focused input while WebKitGTK is still dispatching
+      // its keydown event. Pointer submission runs at the target and is safe;
+      // capture-phase Enter must resolve on the next event-loop turn.
+      setTimeout(() => answer(captured), 0);
     };
     window.addEventListener("keydown", captureEnter, true);
     return () => window.removeEventListener("keydown", captureEnter, true);
@@ -66,20 +52,18 @@
           {/each}
         </div>
       {/if}
-      <form class="custom" onsubmit={submitCustom}>
+      <div class="custom">
         <input
           bind:value={custom}
           placeholder="Or type your own answer…"
-          onkeydown={keySubmit}
-          onkeyup={keySubmit}
         />
         <button
           class="send"
-          type="submit"
+          type="button"
           disabled={!custom.trim()}
-          onpointerdown={pointerSubmit}
+          onclick={() => answer(custom)}
         >Answer</button>
-      </form>
+      </div>
     </div>
   </div>
 {/if}

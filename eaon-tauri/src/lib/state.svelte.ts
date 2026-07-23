@@ -1269,6 +1269,7 @@ class AppState {
     if (session) session.requestId = requestId; // so stopGeneration cancels this step
 
     const { baseUrl, apiKey } = this.endpointFor(model);
+    void api.traceUiEvent(`stream step start request=${requestId} history=${history.length}`);
     try {
       await api.chatStream({
         baseUrl, apiKey, model: model.requestId, messages: history, requestId,
@@ -1292,6 +1293,7 @@ class AppState {
       // blank assistant bubble in that case: retry once as a regular
       // completion using the same conversation history.
       if (!assistant.isError && !assistant.content && !assistant.reasoning) {
+        void api.traceUiEvent(`stream step fallback request=${requestId}`);
         const fallbackMessages = history.map((message) => ({
           role: message.role,
           content: typeof message.content === "string"
@@ -1313,6 +1315,9 @@ class AppState {
     } finally {
       assistant.generationEndTime = Date.now();
       assistant.generatedTokenCount = Math.max(1, Math.ceil(assistant.content.length / 4));
+      void api.traceUiEvent(
+        `stream step end request=${requestId} chars=${assistant.content.length} error=${Boolean(assistant.isError)}`
+      );
     }
     return assistant;
   }
