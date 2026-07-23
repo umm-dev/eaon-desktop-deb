@@ -1425,6 +1425,14 @@ class AppState {
     });
   }
 
+  /** Resolve the visible Agent question before its loop continues. */
+  answerAgentQuestion(answer: string): void {
+    const pending = this.pendingAgentQuestion;
+    if (!pending) return;
+    this.pendingAgentQuestion = null;
+    pending.resolve(answer);
+  }
+
   respondToToolConfirm(decision: "once" | "always" | "deny"): void {
     this.pendingToolConfirm?.resolve(decision);
   }
