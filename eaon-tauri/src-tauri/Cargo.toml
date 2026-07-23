@@ -1,6 +1,6 @@
 [package]
 name = "eaon"
-version = "0.1.0"
+version = "1.0.0"
 description = "Eaon — desktop AI chat client for Debian, Linux, Windows, and macOS"
 authors = ["Sanscreates"]
 homepage = "https://eaon.dev"

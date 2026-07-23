@@ -362,7 +362,7 @@
             <div class="about-text">
               <div class="about-name">Eaon</div>
               <div class="about-tag">Unified Free AI API Platform for Top Models</div>
-              <div class="about-version">Version 2026.3.0 · Windows preview</div>
+              <div class="about-version">Version 1.0.0 · Debian</div>
             </div>
             <a class="link" href="https://eaon.dev" target="_blank" rel="noreferrer">eaon.dev</a>
           </div>

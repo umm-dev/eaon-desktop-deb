@@ -1,6 +1,6 @@
 {
   "name": "eaon-desktop",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Eaon desktop AI chat client for Debian and other Linux desktops",
   "type": "module",
   "scripts": {
