@@ -19,6 +19,11 @@
     event.preventDefault();
     answer(custom);
   }
+
+  function pointerSubmit(event: PointerEvent) {
+    event.preventDefault();
+    answer(custom);
+  }
 </script>
 
 {#if pending}
@@ -41,7 +46,12 @@
           bind:value={custom}
           placeholder="Or type your own answer…"
         />
-        <button class="send" type="submit" disabled={!custom.trim()}>Answer</button>
+        <button
+          class="send"
+          type="submit"
+          disabled={!custom.trim()}
+          onpointerdown={pointerSubmit}
+        >Answer</button>
       </form>
     </div>
   </div>
