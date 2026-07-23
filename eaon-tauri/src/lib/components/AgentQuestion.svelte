@@ -9,7 +9,6 @@
 
   const pending = $derived(app.pendingAgentQuestion);
   let custom = $state("");
-  let customInput = $state<HTMLInputElement | null>(null);
 
   function answer(text: string) {
     const trimmed = text.trim();
@@ -39,10 +38,9 @@
 
   onMount(() => {
     const captureEnter = (event: KeyboardEvent) => {
-      if (document.activeElement !== customInput) return;
       const enter = event.key === "Enter" || event.key === "Return"
         || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
-      if (!enter) return;
+      if (!enter || !app.pendingAgentQuestion || !custom.trim()) return;
       void api.traceUiEvent(`agent-question capture key=${event.key} code=${event.code} length=${custom.length}`);
       event.preventDefault();
       event.stopPropagation();
@@ -70,7 +68,6 @@
       {/if}
       <form class="custom" onsubmit={submitCustom}>
         <input
-          bind:this={customInput}
           bind:value={custom}
           placeholder="Or type your own answer…"
           onkeydown={keySubmit}
