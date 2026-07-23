@@ -7,7 +7,6 @@
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
 
-  const pending = $derived(app.pendingAgentQuestion);
   let custom = $state("");
 
   function answer(text: string) {
@@ -51,7 +50,8 @@
   });
 </script>
 
-{#if pending}
+{#if app.pendingAgentQuestion}
+  {@const pending = app.pendingAgentQuestion}
   <div class="overlay">
     <div class="card">
       <div class="title">

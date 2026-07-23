@@ -1387,11 +1387,13 @@ class AppState {
 
       if (this.sessions[conversationId]?.stopped) break;
       const resultsText = `[Tool results — automated, not written by the user]\n\n${sections.join("\n\n")}`;
+      void api.traceUiEvent(`agent tools complete sections=${sections.length}`);
       conversation.messages.push({
         id: uid(), role: "user", content: resultsText, reasoning: "",
         timestamp: Date.now(), isToolResult: true,
       });
       history.push({ role: "user", content: resultsText });
+      void api.traceUiEvent(`agent tool result appended step=${step}`);
       this.saveSoon();
     }
   }
